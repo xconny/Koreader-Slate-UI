@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"
+     viewBox="0 0 24 24">
+  <g fill="none" stroke="#000000" stroke-width="1.1"
+     stroke-linecap="round" stroke-linejoin="round">
+    <!-- Larger body, almost full viewBox -->
+    <rect x="1" y="5" width="22" height="14" rx="4" />
+    <!-- D-pad shifted left for more balanced padding -->
+    <path d="M7 13H5m2 0h2M7 11v2m0 0v2" />
+    <!-- Buttons, slightly outwards -->
+    <circle cx="16" cy="11.5" r="1.1" />
+    <circle cx="18.5" cy="13.5" r="1.1" />
+  </g>
+</svg>
