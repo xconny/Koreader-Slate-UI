@@ -151,6 +151,38 @@ local function inputItem(key, label, default, hint, description, normalize, hidd
     }
 end
 
+-- Keep the confirmation on top of this modal picker without modifying
+-- KOReader's shared PathChooser/ButtonDialog implementations.
+local BackgroundPathChooser=PathChooser:extend{}
+function BackgroundPathChooser:onMenuHold(item)
+    local ffiUtil=require('ffi/util')
+    local lfs=require('libs/libkoreader-lfs')
+    local BD=require('ui/bidi')
+    local path=item and item.path
+    if type(path)~='string'then return true end
+    if path:sub(-2)=='/.'then path=path:sub(1,-3)end
+    path=ffiUtil.realpath(path)
+    local attr=path and lfs.attributes(path)
+    if not attr or attr.mode~='file'or not self.select_file then return true end
+    local title=_("Choose this file?")..'\n\n'..BD.filepath(path)
+    local picker=self
+    local dialog
+    dialog=require('ui/widget/buttondialog'):new{
+        modal=true,title=title,
+        buttons={{
+            {text=_("Cancel"),callback=function()UIManager:close(dialog);picker.button_dialog=nil end},
+            {text=_("Choose"),callback=function()
+                UIManager:close(dialog);picker.button_dialog=nil
+                UIManager:close(picker)
+                if picker.onConfirm then picker.onConfirm(path)end
+            end},
+        }},
+    }
+    self.button_dialog=dialog
+    showDialog(dialog)
+    return true
+end
+
 local function backgroundPicker()
     return {
         text_func = function()
@@ -160,7 +192,7 @@ local function backgroundPicker()
         callback = function(menu)
             local image = read("custom_bg_path", "/mnt/us/wallpapers/sleepscreen.jpg")
             local folder = read("custom_bg_folder") or image:match("^(.*)/[^/]+$") or "/mnt/us/wallpapers"
-            showDialog(PathChooser:new{
+            showDialog(BackgroundPathChooser:new{
                 title = _("Choose background image"),
                 path = folder,
                 select_file = true,

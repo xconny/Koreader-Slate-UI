@@ -767,6 +767,33 @@ function Popup:rebuild()
         footer_gap=bottom_gap-bottom_trim
         self.box.h=self.box.h-trim
         button_y=button_y-trim;available=available-trim
+        -- The category pager is one window. A short final page must retain
+        -- its established outer geometry instead of drawing a smaller frame
+        -- over the previous page. Recompute only when layout options change.
+        local key=table.concat({self.padding_base_h,self.box.w,rows,columns,
+            self.pad,self.bottom_pad,self.title_h,self.title_gap,self.button_h,
+            self.gap,Screen:getHeight()},":")
+        if self.category_frame_key~=key then
+            self.category_frame_key=key
+            self.category_frame_h=self.box.h
+        end
+        local delta=self.category_frame_h-self.box.h
+        self.box.h=self.category_frame_h
+        button_y=button_y+delta;available=available+delta
+        footer_gap=math.max(0,available-first_row_gap-block)
+        if delta<0 and first_row_gap+block>available then
+            local fixed=gap*math.max(0,visible_groups-1)
+                +(progress_space+title_h+title_cover_gap)*visible_groups
+            local total=block-fixed
+            local room=math.max(visible_groups,available-first_row_gap-fixed-self.gap)
+            local factor=math.min(1,room/math.max(1,total))
+            block=fixed
+            for i=1,visible_groups do
+                groups[i].height=math.max(1,math.floor(groups[i].height*factor))
+                block=block+groups[i].height
+            end
+            footer_gap=math.max(0,available-first_row_gap-block)
+        end
     end
     if self.kind=="library" and not categories then
         if not self.folder then
