@@ -1,6 +1,63 @@
-# SLATE UI
+# Koreader\-Slate\-UI
 
 **An interactive home gui for KOReader—books, quotes, weather, reading statistics, quick launch apps and games, together\.**
+
+## 📸 Screenshots
+
+Click a thumbnail or its title to open the full\-size image\.
+
+<table>
+  <tr>
+    <td align="center">
+      <a href="screenshots/main%20ui.png?raw=true"><img src="screenshots/main%20ui.png" width="180" alt="Slate UI — Main UI"></a>
+      <br><a href="screenshots/main%20ui.png?raw=true"><strong>[Main UI]</strong></a>
+    </td>
+    <td align="center">
+      <a href="screenshots/entire%20library.png?raw=true"><img src="screenshots/entire%20library.png" width="180" alt="Slate UI — Entire Library"></a>
+      <br><a href="screenshots/entire%20library.png?raw=true"><strong>[Entire Library]</strong></a>
+    </td>
+  </tr>
+  <tr>
+    <td align="center">
+      <a href="screenshots/library%20folders.png?raw=true"><img src="screenshots/library%20folders.png" width="180" alt="Slate UI — Library Categories"></a>
+      <br><a href="screenshots/library%20folders.png?raw=true"><strong>[Library Categories]</strong></a>
+    </td>
+    <td align="center">
+      <a href="screenshots/recent%20books.png?raw=true"><img src="screenshots/recent%20books.png" width="180" alt="Slate UI — Recent Books"></a>
+      <br><a href="screenshots/recent%20books.png?raw=true"><strong>[Recent Books]</strong></a>
+    </td>
+  </tr>
+  <tr>
+    <td align="center">
+      <a href="screenshots/current%20book%20description.png?raw=true"><img src="screenshots/current%20book%20description.png" width="180" alt="Slate UI — Book Description"></a>
+      <br><a href="screenshots/current%20book%20description.png?raw=true"><strong>[Book Description]</strong></a>
+    </td>
+    <td align="center">
+      <a href="screenshots/current%20book%20highlights.png?raw=true"><img src="screenshots/current%20book%20highlights.png" width="180" alt="Slate UI — Book Highlights"></a>
+      <br><a href="screenshots/current%20book%20highlights.png?raw=true"><strong>[Book Highlights]</strong></a>
+    </td>
+  </tr>
+  <tr>
+    <td align="center">
+      <a href="screenshots/quotes%20viewer.png?raw=true"><img src="screenshots/quotes%20viewer.png" width="180" alt="Slate UI — Quotes Viewer"></a>
+      <br><a href="screenshots/quotes%20viewer.png?raw=true"><strong>[Quotes Viewer]</strong></a>
+    </td>
+    <td align="center">
+      <a href="screenshots/quick%20launch%20menu.png?raw=true"><img src="screenshots/quick%20launch%20menu.png" width="180" alt="Slate UI — Quick Launch"></a>
+      <br><a href="screenshots/quick%20launch%20menu.png?raw=true"><strong>[Quick Launch]</strong></a>
+    </td>
+  </tr>
+  <tr>
+    <td align="center">
+      <a href="screenshots/reading%20progress.png?raw=true"><img src="screenshots/reading%20progress.png" width="180" alt="Slate UI — Reading Statistics"></a>
+      <br><a href="screenshots/reading%20progress.png?raw=true"><strong>[Reading Statistics]</strong></a>
+    </td>
+    <td align="center">
+      <a href="screenshots/week%20weather.png?raw=true"><img src="screenshots/week%20weather.png" width="180" alt="Slate UI — Seven-Day Weather"></a>
+      <br><a href="screenshots/week%20weather.png?raw=true"><strong>[Seven-Day Weather]</strong></a>
+    </td>
+  </tr>
+</table>
 
 ## 🏠 Your reading home
 
