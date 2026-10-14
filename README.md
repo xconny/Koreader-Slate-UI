@@ -14,11 +14,11 @@
 - **Browse by cover:** your entire library, folder\-based Categories and reading history\.
 - **Stay in your library:** open category folders within the same window and return with the back arrow\.
 - **Tap to read:** open books directly from covers in library, recents and quote popups\.
-- **Long\-press to explore:** view descriptions and saved highlights without losing your place in the library\.
+- **Long\-press a book:** open that book’s description and saved highlights from the current\-book widget, Library or Recents\. The library stays open behind it\.
 - **Preview the artwork:** long\-press covers in book and quote popups to enlarge them\.
 - **Build your own grids:** configure books per row, rows per page and folders per Categories page\.
 - **See your progress:** optional progress bars and percentages on book thumbnails\.
-- **Choose your browser:** use Slate’s visual library and recents, or open KOReader’s native views directly\.
+- **Bypass Slate’s browser:** configure the Library button to open KOReader’s library directory directly, and the Recents button to open KOReader’s native reading history\. Each button has its own setting\.
 
 ## 💬 Highlights & quotes
 
@@ -29,14 +29,14 @@
 - **Return to the passage:** jump directly from a quote to its location in the book\.
 - **Read comfortably:** adjustable fonts, paginated text and swipe navigation; page turners appear when needed\.
 
-## ⭐ Favourites & tags
+### ⭐ Favourites & tags
 
 - **Save a favourite:** toggle the star beside a highlight or quote\.
-- **Browse your favourites:** a dedicated view with the same book context and navigation controls\.
+- **Browse your favourites:** open the favourites view from the Quotes menu, with book context and direct passage navigation\.
 - **Organise by theme:** assign multiple tags to a quote, or create a tag while reading\.
 - **Edit with checkboxes:** select and apply existing tags through a consistent tag picker\.
-- **Explore TAG&#40;S&#41;:** browse tagged quotes or filter by selected tags\.
-- **Manage your collection:** add and remove tag names, or remove a tag from an individual quote\.
+- **Explore TAG&#40;S&#41;:** a dedicated tab inside Quotes for all tagged quotes or a selected set of tags\.
+- **Manage your collection:** add and remove tag names, or remove a tag from an individual quote—all through the quote controls and menus\.
 
 ## 📝 Book descriptions & metadata
 
@@ -70,11 +70,22 @@
 - **Two dedicated tabs:** swipe left or right between Apps and Games\.
 - **Adaptive layouts:** two columns for smaller collections; three when a tab contains more than twelve selected plugins\.
 - **Consistent labels:** shared text sizing across launcher entries\.
-- **Integrated menus:** supported settings\-based plugins open in Slate\-style windows; plugins with their own interfaces retain them\.
+- **Settings without leaving Slate:** menu\-only plugins without their own GUI open a dedicated Slate\-style popup, giving you direct access to their available settings and actions\. Plugins with their own GUI retain their normal interface\.
+
+## 👆 Touch & swipe navigation
+
+- **Swipe through popups:** browse Library, Recents, highlights, quotes, search results, favourites and search diagnostics\.
+- **Navigate quotes naturally:** swipe vertically between quotes/highlights and horizontally between text pages\.
+- **Browse category previews:** swipe a folder’s cover row to reveal more books without entering it\.
+- **Switch launchers:** swipe left or right between Apps and Games\.
+- **Keep your place:** layered book popups return you to the library folder and page you were browsing\.
+- **Choose how to exit:** optionally require a long press to leave Slate\.
 
 ## 🔒 PIN\-pad lock
 
 - **Optional screen lock:** set, change or reset your PIN\.
+- **Quick toggle:** tap the lock icon to enable or disable PIN\-lock mode once a PIN is configured; enter your PIN to unlock a locked screen\.
+- **Wrong\-PIN protection:** temporary lockout after repeated incorrect attempts\.
 - **Custom lock messages:** choose your message, placement and alignment\.
 - **Control feedback:** configure success messages and lock\-icon outlines\.
 - **Settings within reach:** optionally long\-press the unlocked lock icon to open the complete Slate settings editor\.
