@@ -326,15 +326,17 @@ local function textInkBounds(widget)
     return top, bottom
 end
 
-local function cardText(bb, text, rect, size, color, bold, align, vertical_align)
+local function cardText(bb, text, rect, size, color, bold, align, vertical_align, minimum_size)
     local widget
-    for font_size = size, 6, -1 do
+    local minimum = math.min(size, minimum_size or 6)
+    for font_size = size, minimum, -1 do
         widget = TextWidget:new{
             text = tostring(text or ""), face = Font:getFace("cfont", font_size),
             bold = bold, fgcolor = color,
+            max_width = minimum_size and font_size == minimum and math.max(1, rect.w) or nil,
         }
         local dim = widget:getSize()
-        if (dim.h <= rect.h and dim.w <= rect.w) or font_size == 6 then break end
+        if (dim.h <= rect.h and dim.w <= rect.w) or font_size == minimum then break end
         widget:free()
     end
     local dim = widget:getSize()
@@ -461,13 +463,14 @@ local function paintLocationBattery(bb, text, rect, size, color)
     end)
     capacity = ok and tonumber(capacity) or nil
     if not capacity then
-        return cardText(bb, text, rect, size, color, false)
+        return cardText(bb, text, rect, size, color, false, nil, nil, math.max(1, math.floor(size*.4)))
     end
     capacity = math.max(0, math.min(100, math.floor(capacity + 0.5)))
     local prefix, percent, dimensions, prefix_widget, percent_widget
     prefix = text .. " • "
     percent = tostring(capacity) .. "%"
-    for font_size = math.max(1, math.floor(size)), 1, -1 do
+    local minimum = math.max(1, math.floor(size * .4))
+    for font_size = math.max(1, math.floor(size)), minimum, -1 do
         prefix_widget = TextWidget:new{
             text = prefix, face = Font:getFace("cfont", font_size), fgcolor = color,
         }
@@ -480,6 +483,15 @@ local function paintLocationBattery(bb, text, rect, size, color)
         local icon_w = math.max(5, math.floor(icon_h * 1.7))
         local gap = math.max(1, math.floor(icon_h * 0.3))
         local terminal = math.max(1, math.floor(icon_h * 0.16))
+        if font_size == minimum then
+            prefix_widget:free()
+            prefix_widget = TextWidget:new{
+                text = prefix, face = Font:getFace("cfont", font_size), fgcolor = color,
+                max_width = math.max(1, rect.w-icon_w-terminal-gap*2-bd.w),
+                truncate_left = true,
+            }
+            pd = prefix_widget:getSize()
+        end
         dimensions = {
             prefix = pd, percent = bd, icon_h = icon_h, icon_w = icon_w,
             gap = gap, terminal = terminal,
@@ -536,6 +548,11 @@ function ThreeSectionCard:paintTo(bb, x, y)
     local book_x = inner_x + gutter
     local weather_x = inner_x + section_w + gutter
     local content_w = math.max(1, math.floor(section_w - gutter * 2))
+    local weather_enabled = G_reader_settings:readSetting("slate_weather_main_weather_enabled", true) ~= false
+    local book_w, book_scale = content_w, 1
+    local function bookSize(key, default)
+        return math.max(1, math.floor(getUserSize(key, default) * book_scale))
+    end
     local function rect(rx, fraction, height)
         return {
             x = math.floor(rx),
@@ -556,26 +573,43 @@ function ThreeSectionCard:paintTo(bb, x, y)
     }
     owner._slate_book_tap_targets = {}
     owner._slate_tap_targets = {}
+    -- Keep launcher geometry independent of the expanded book section.
+    local button_area = owner._slate_button_area
+    local base_button = math.min(Screen:scaleBySize(36), math.floor(Screen:getWidth() * 0.08))
+    local button_size = math.max(1, math.min(base_button,
+        math.floor((button_area.w - 2) / 2.56),
+        math.floor((button_area.h - 2) / 2.56)))
+    local button_gap = math.max(2, math.min(math.floor(button_size * 0.56),
+        math.floor(button_area.w - button_size * 2), math.floor(button_area.h - button_size * 2)))
+    local button_left = math.floor(button_area.x + button_area.w - button_size * 2 - button_gap)
+    weather_x = math.floor((book_x + content_w + button_left - content_w) / 2)
+    if not weather_enabled then
+        book_w = math.max(1, button_left - button_gap - math.floor(book_x))
+        book_scale = math.min(1.5, math.sqrt(book_w / content_w))
+    end
+    local function bookRect(fraction, height)
+        local r = rect(book_x, fraction, height);r.w=book_w;return r
+    end
     local book_labels_bottom = inner_y + inner_h * 0.64
-    local book_label_width = content_w
+    local book_label_width = book_w
     local progress = tonumber(doc.progress)
     if progress then
         progress = math.max(0, math.min(1, progress))
-        local line = rect(book_x, 0.66, 0.16)
+        local line = weather_enabled and bookRect(0.66, 0.16) or bookRect(0.60, 0.24)
         book_labels_bottom = line.y - math.max(2, math.floor(inner_h * 0.02))
-        local percent_w = math.max(1, math.floor(content_w * 0.23))
-        local old_gap = math.max(2, math.floor(content_w * 0.015))
+        local percent_w = math.max(1, math.floor(book_w * 0.23))
+        local old_gap = math.max(2, math.floor(book_w * 0.015))
         local text_w = cardText(bb, string.format("%i%%", math.floor(progress * 100 + 0.5)),
-            { x = line.x + content_w - percent_w, y = line.y, w = percent_w, h = line.h },
-            getUserSize("slate_weather_widget_progress_font_size", 26),
-            foreground, true, "center")
+            { x = line.x + book_w - percent_w, y = line.y, w = percent_w, h = line.h },
+            bookSize("slate_weather_widget_progress_font_size", 26),
+            foreground, true, weather_enabled and "center" or "right")
         -- Include the percentage's centering inset when halving the visible gap.
-        local inset = math.max(0, math.floor((percent_w - text_w) / 2))
-        local gap = math.max(1, math.floor((old_gap + inset) / 2))
-        local bar_w = math.max(1, content_w - percent_w + inset - gap)
+        local inset = math.max(0, weather_enabled and math.floor((percent_w - text_w) / 2) or percent_w - text_w)
+        local gap = math.max(1, math.floor((old_gap + (weather_enabled and inset or 0)) / 2))
+        local bar_w = math.max(1, book_w - percent_w + inset - gap)
         book_label_width = bar_w
         local bar_h = math.max(1, math.min(
-            getUserSize("slate_weather_widget_progress_height", 6),
+            math.floor(getUserSize("slate_weather_widget_progress_height", 6) * (weather_enabled and 1 or book_w/content_w)),
             math.floor(line.h / 3)))
         local bar_y = line.y + math.floor((line.h - bar_h) / 2)
         bb:paintRect(line.x, bar_y, bar_w, bar_h, Blitbuffer.COLOR_GRAY_9)
@@ -583,154 +617,164 @@ function ThreeSectionCard:paintTo(bb, x, y)
         owner._slate_book_tap_targets.progress = line
     end
 
-    -- Match the right edge of the buttons to the left inset of the book.
-    -- Place the weather block halfway between the book and button edges.
-    local button_area = owner._slate_button_area
-    local base_button = math.min(Screen:scaleBySize(36), math.floor(Screen:getWidth() * 0.08))
-    local button_size = math.max(1, math.min(base_button,
-        math.floor((button_area.w - 2) / 2.56),
-        math.floor((button_area.h - 2) / 2.56)))
-    if G_reader_settings:readSetting("slate_weather_widget_border_enabled", true) == true then
-        bb:paintBorder(x, y, self.width, self.height,
-            2, foreground, radius)
+    local custom = (self.background_mode or G_reader_settings:readSetting("slate_weather_display_style")) == "custombg"
+    -- Each display has its own removal preference; no master switch can
+    -- override the other mode. The old switch only seeds cover-mode defaults.
+    local remove_border
+    if custom then
+        remove_border = G_reader_settings:readSetting("slate_weather_remove_custom_widget_border", false) == true
+    else
+        local old_removed = G_reader_settings:readSetting("slate_weather_widget_border_enabled", true) ~= true
+        remove_border = G_reader_settings:readSetting("slate_weather_remove_cover_widget_border", old_removed) == true
     end
-    local button_gap = math.max(2, math.min(math.floor(button_size * 0.56),
-        math.floor(button_area.w - button_size * 2),
-        math.floor(button_area.h - button_size * 2)))
-    local button_left = button_area.x + button_area.w - button_size * 2 - button_gap
-    local book_right = book_x + content_w
-    weather_x = math.floor((book_right + button_left - content_w) / 2)
-    local top = rect(weather_x, 0, 0.46)
-    local phase = data.astronomy and data.astronomy.moon_phase
-    local moon_path = phase and owner:getMoonPhaseIcon(phase)
-    local weather_path = data.current.icon_path
-    local temperature = tostring(data.current.temperature or "")
-    local weather_size = getUserSize("slate_weather_widget_weather_icon_size", 146)
-    local moon_size = getUserSize("slate_weather_widget_moon_icon_size", 85)
-    local gap = math.max(2, getUserSize("slate_weather_widget_small_spacing", 5))
-    local icon_count = (moon_path and 1 or 0) + (weather_path and 1 or 0)
-    local temp_size = getUserSize("slate_weather_widget_temp_size", 37)
-    local temp_width, temp_height
-
-    local function measureTemperature(size)
-        local text = TextWidget:new{
-            text = temperature, face = Font:getFace("cfont", size), bold = true,
-        }
-        local dim = text:getSize()
-        text:free()
-        return dim.w, dim.h
+    if not remove_border then
+        bb:paintBorder(x, y, self.width, self.height, 2, foreground, radius)
     end
+    local labels_y, weather_bottom = inner_y, inner_y + inner_h
+    if weather_enabled then
+        local top = rect(weather_x, 0, 0.46)
+        local phase = data.astronomy and data.astronomy.moon_phase
+        local moon_path = phase and owner:getMoonPhaseIcon(phase)
+        local weather_path = data.current.icon_path
+        local temperature = tostring(data.current.temperature or "")
+        local weather_size = getUserSize("slate_weather_widget_weather_icon_size", 146)
+        local moon_size = getUserSize("slate_weather_widget_moon_icon_size", 85)
+        local gap = math.max(2, getUserSize("slate_weather_widget_small_spacing", 5))
+        local icon_count = (moon_path and 1 or 0) + (weather_path and 1 or 0)
+        local temp_size = getUserSize("slate_weather_widget_temp_size", 37)
+        local temp_width, temp_height
 
-    temp_width, temp_height = measureTemperature(temp_size)
-    local wanted = (moon_path and moon_size or 0) + (weather_path and weather_size or 0)
-    local factor = math.min(1,
-        top.w / math.max(1, wanted + temp_width + icon_count * gap),
-        top.h / math.max(1, temp_height,
-            weather_path and weather_size or 0,
-            moon_path and moon_size or 0))
-    moon_size = math.max(1, math.floor(moon_size * factor))
-    weather_size = math.max(1, math.floor(weather_size * factor))
-    temp_size = math.max(6, math.floor(temp_size * factor))
-    gap = math.max(2, math.floor(gap * factor))
-    temp_width, temp_height = measureTemperature(temp_size)
-
-    local function groupWidth()
-        return (moon_path and moon_size or 0) + (weather_path and weather_size or 0)
-            + temp_width + icon_count * gap
-    end
-
-    while temp_size > 6 and (groupWidth() > top.w or temp_height > top.h) do
-        temp_size = temp_size - 1
-        temp_width, temp_height = measureTemperature(temp_size)
-    end
-    if groupWidth() > top.w then
-        local available = math.max(icon_count, top.w - temp_width - icon_count * gap)
-        local total = (moon_path and moon_size or 0) + (weather_path and weather_size or 0)
-        local shrink = math.min(1, available / math.max(1, total))
-        moon_size = math.max(1, math.floor(moon_size * shrink))
-        weather_size = math.max(1, math.floor(weather_size * shrink))
-    end
-
-    local icon_x = top.x
-    self.icons = self.icons or {}
-
-    local function paintIcon(key, path, size)
-        if not path then return end
-        local alpha, original = true, false
-        if key == "weather" and effective and not (override == "day" and real) then
-            alpha, original = false, true
-        end
-        local icon = self.icons[key]
-        if not icon or icon.file ~= path or icon.width ~= size
-            or icon.alpha ~= alpha or icon.original_in_nightmode ~= original then
-            if icon then icon:free() end
-            icon = ImageWidget:new{
-                file = path, width = size, height = size, alpha = alpha,
-                original_in_nightmode = original, invert = false,
+        local function measureTemperature(size)
+            local text = TextWidget:new{
+                text = temperature, face = Font:getFace("cfont", size), bold = true,
             }
-            self.icons[key] = icon
+            local dim = text:getSize()
+            text:free()
+            return dim.w, dim.h
         end
-        local iy = top.y + math.floor((top.h - size) / 2)
-        icon:paintTo(bb, icon_x, iy)
-        owner._slate_tap_targets[key] = { x = icon_x, y = iy, w = size, h = size }
-        icon_x = icon_x + size + gap
-    end
 
-    paintIcon("moon", moon_path, moon_size)
-    paintIcon("weather", weather_path, weather_size)
-    local _, _, temperature_top = cardText(bb, temperature, {
-        x = icon_x, y = top.y, w = math.max(1, top.x + top.w - icon_x), h = top.h,
-    }, temp_size, foreground, true)
-    local weather_section = {
-        x = top.x,
-        y = math.floor(inner_y),
-        w = content_w,
-        h = math.max(1, math.ceil(inner_y + inner_h) - math.floor(inner_y)),
-    }
-    owner._slate_tap_targets.weather_section = weather_section
-    owner._slate_tap_targets.weather_group = weather_section
+        temp_width, temp_height = measureTemperature(temp_size)
+        local wanted = (moon_path and moon_size or 0) + (weather_path and weather_size or 0)
+        local factor = math.min(1,
+            top.w / math.max(1, wanted + temp_width + icon_count * gap),
+            top.h / math.max(1, temp_height,
+                weather_path and weather_size or 0,
+                moon_path and moon_size or 0))
+        moon_size = math.max(1, math.floor(moon_size * factor))
+        weather_size = math.max(1, math.floor(weather_size * factor))
+        temp_size = math.max(6, math.floor(temp_size * factor))
+        gap = math.max(2, math.floor(gap * factor))
+        temp_width, temp_height = measureTemperature(temp_size)
 
-    local condition = data.current.condition
-    local description = phase and condition and (phase .. " • " .. condition)
-        or phase or condition or ""
-    local description_width = cardText(bb, description, rect(weather_x, 0.50, 0.24),
-        getUserSize("slate_weather_widget_detail_size", 23), foreground, false)
-    local location = data.current.location
-        or G_reader_settings:readSetting("slate_weather_location") or _("Unknown")
-    local clock = datetime.secondsToHour(os.time(), G_reader_settings:isTrue("twelve_hour_clock"))
-    local location_rect = rect(weather_x, 0.76, 0.24)
-    if description_width and description_width > 0 then
-        location_rect.w = math.min(location_rect.w, description_width)
+        local function groupWidth()
+            return (moon_path and moon_size or 0) + (weather_path and weather_size or 0)
+                + temp_width + icon_count * gap
+        end
+
+        while temp_size > 6 and (groupWidth() > top.w or temp_height > top.h) do
+            temp_size = temp_size - 1
+            temp_width, temp_height = measureTemperature(temp_size)
+        end
+        if groupWidth() > top.w then
+            local available = math.max(icon_count, top.w - temp_width - icon_count * gap)
+            local total = (moon_path and moon_size or 0) + (weather_path and weather_size or 0)
+            local shrink = math.min(1, available / math.max(1, total))
+            moon_size = math.max(1, math.floor(moon_size * shrink))
+            weather_size = math.max(1, math.floor(weather_size * shrink))
+        end
+
+        local icon_x = top.x
+        self.icons = self.icons or {}
+
+        local function paintIcon(key, path, size)
+            if not path then return end
+            local alpha, original = true, false
+            if key == "weather" and effective and not (override == "day" and real) then
+                alpha, original = false, true
+            end
+            local icon = self.icons[key]
+            if not icon or icon.file ~= path or icon.width ~= size
+                or icon.alpha ~= alpha or icon.original_in_nightmode ~= original then
+                if icon then icon:free() end
+                icon = ImageWidget:new{
+                    file = path, width = size, height = size, alpha = alpha,
+                    original_in_nightmode = original, invert = false,
+                }
+                self.icons[key] = icon
+            end
+            local iy = top.y + math.floor((top.h - size) / 2)
+            icon:paintTo(bb, icon_x, iy)
+            owner._slate_tap_targets[key] = { x = icon_x, y = iy, w = size, h = size }
+            icon_x = icon_x + size + gap
+        end
+
+        paintIcon("moon", moon_path, moon_size)
+        paintIcon("weather", weather_path, weather_size)
+        local _, _, temperature_top = cardText(bb, temperature, {
+            x = icon_x, y = top.y, w = math.max(1, top.x + top.w - icon_x), h = top.h,
+        }, temp_size, foreground, true)
+        local weather_section = {
+            x = top.x,
+            y = math.floor(inner_y),
+            w = content_w,
+            h = math.max(1, math.ceil(inner_y + inner_h) - math.floor(inner_y)),
+        }
+        owner._slate_tap_targets.weather_section = weather_section
+        owner._slate_tap_targets.weather_group = weather_section
+
+        local condition = data.current.condition
+        local description = phase and condition and (phase .. " • " .. condition)
+            or phase or condition or ""
+        -- Preserve the original single-line layout and normal fitted size.
+        -- Only unusually long strings reach the small-font guard/ellipsis.
+        local detail_size = getUserSize("slate_weather_widget_detail_size", 23)
+        local description_width = cardText(bb, description, rect(weather_x, 0.50, 0.24),
+            detail_size, foreground, false, nil, nil, math.max(6, math.floor(detail_size*.4)))
+        local location = data.current.location
+            or G_reader_settings:readSetting("slate_weather_location") or _("Unknown")
+        local clock = datetime.secondsToHour(os.time(), G_reader_settings:isTrue("twelve_hour_clock"))
+        local location_rect = rect(weather_x, 0.76, 0.24)
+        if description_width and description_width > 0 then
+            location_rect.w = math.min(location_rect.w, description_width)
+        end
+        local _, location_height, location_top, location_bottom = paintLocationBattery(bb, location .. " • " .. clock, location_rect,
+            getUserSize("slate_weather_widget_location_size", 22), foreground)
+        owner._slate_location_line_top=location_top or (location_bottom and location_bottom-(location_height or 0))
+            or location_rect.y+math.floor((location_rect.h-(location_height or location_rect.h))/2)
+        owner._slate_tap_targets.weather_details = {
+            x = weather_x, y = inner_y + inner_h * 0.5,
+            w = content_w, h = inner_h * 0.5,
+        }
+        local weather_top = temperature_top or top.y + math.max(0, math.floor((top.h - temp_height) / 2))
+        labels_y = math.max(inner_y, weather_top)
+        weather_bottom = location_bottom or location_rect.y + math.floor(
+            (location_rect.h - (location_height or location_rect.h)) / 2)
+            + (location_height or location_rect.h)
+    else
+        -- Prevent stale weather targets/anchors when toggling the block off.
+        owner._slate_location_line_top = inner_y + inner_h * .82
     end
-    local _, location_height, location_top, location_bottom = paintLocationBattery(bb, location .. " • " .. clock, location_rect,
-        getUserSize("slate_weather_widget_location_size", 22), foreground)
-    owner._slate_location_line_top=location_top or (location_bottom and location_bottom-(location_height or 0))
-        or location_rect.y+math.floor((location_rect.h-(location_height or location_rect.h))/2)
-    owner._slate_tap_targets.weather_details = {
-        x = weather_x, y = inner_y + inner_h * 0.5,
-        w = content_w, h = inner_h * 0.5,
-    }
-    local weather_top = temperature_top or top.y + math.max(0, math.floor((top.h - temp_height) / 2))
-    local labels_y = math.max(inner_y, weather_top)
-    local weather_bottom = location_bottom or location_rect.y + math.floor(
-        (location_rect.h - (location_height or location_rect.h)) / 2)
-        + (location_height or location_rect.h)
     if doc.page_no and doc.page_total then
-        local line = rect(book_x, 0.82, 0.18)
+        local line = bookRect(0.82, 0.18)
         line.h = math.max(1, weather_bottom - line.y)
         cardText(bb, string.format("Page %i of %i", doc.page_no, doc.page_total), line,
-            getUserSize("slate_weather_widget_progress_font_size", 26), foreground,
+            bookSize("slate_weather_widget_progress_font_size", 26), foreground,
             false, nil, "bottom")
         owner._slate_book_tap_targets.page = line
     end
+    -- Move the existing title/author block down, retaining its original
+    -- measuring height so this spacing change cannot enlarge or shrink fonts.
+    -- The progress and page lines stay fixed; their lower gap pays for the inset.
+    local title_inset = math.max(0, labels_y - y)
     local labels_rect = {
-        x = book_x, y = labels_y, w = content_w, title_w = book_label_width,
+        x = book_x, y = labels_y + (weather_enabled and 0 or math.floor(title_inset * .6 + .5)),
+        w = book_w, title_w = book_label_width,
         h = math.max(1, math.floor(book_labels_bottom - labels_y)),
     }
     owner._slate_book_tap_targets.title_author = labels_rect
     paintBookLabels(self, bb, doc.title or "", doc.authors or "", labels_rect,
-        getUserSize("slate_weather_widget_title_size", 28),
-        getUserSize("slate_weather_widget_author_size", 27), foreground)
+        bookSize("slate_weather_widget_title_size", 28),
+        bookSize("slate_weather_widget_author_size", 27), foreground)
 end
 
 function SlateReading:buildOverlayCard(owner, weather_data, doc_info, screen_width, screen_height)
@@ -755,6 +799,7 @@ function SlateReading:buildOverlayCard(owner, weather_data, doc_info, screen_wid
     height = math.min(height, math.floor(screen_height * 0.5))
     return ThreeSectionCard:new{
         owner = owner, data = data, doc = doc, width = width, height = height,
+        background_mode = G_reader_settings:readSetting("slate_weather_display_style", "reading"),
     }
 end
 
@@ -805,6 +850,7 @@ function SlateReading:create(slate, weather_data)
             doc_info.file or G_reader_settings:readSetting("lastfile"))
     end
     local background_widget
+    local background_mode = doc_info.cover_bb and "reading" or "custombg"
 
     if doc_info.cover_bb then
         local cover_bb = doc_info.cover_bb
@@ -870,6 +916,7 @@ function SlateReading:create(slate, weather_data)
     end
 
     local card = self:buildOverlayCard(slate, weather_data, doc_info, screen_width, screen_height)
+    card.background_mode = background_mode
 
     local bottom_offset = tonumber(G_reader_settings:readSetting("slate_weather_widget_bottom_offset")) or 115
     if bottom_offset < 0 then bottom_offset = 0 end

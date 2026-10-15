@@ -528,6 +528,13 @@ function Settings:buildWidget(owner)
 
 
     local weather_items = {
+        {
+            text = _("Disable weather on main Slate screen"),
+            checked_func = function()return read("main_weather_enabled", true) == false end,
+            callback = function(menu)
+                save("main_weather_enabled", read("main_weather_enabled", true) == false, menu)
+            end,
+        },
         inputItem("location", _("City"), owner.default_location or "London",
             _("City, Country or latitude,longitude"), _("Enter a city, optionally followed by its country, or coordinates. Example: Athens, Greece or 37.98,23.73.")),
         choice("temp_scale", _("Temperature scale"), {
@@ -576,18 +583,28 @@ function Settings:buildWidget(owner)
         },
     }
 
-    appearance[2].sub_item_table[#appearance[2].sub_item_table + 1] = {
-        text = _("Show overall widget border"),
-        checked_func = function()
-            return read("widget_border_enabled", true) == true
-        end,
-        callback = function(menu)
-            save("widget_border_enabled", read("widget_border_enabled", true) ~= true, menu)
-            if owner and owner._slate_screen then
-                UIManager:setDirty(owner._slate_screen, "ui")
-            end
-        end,
-    }
+    local function borderToggle(key, label, default)
+        return {
+            text = label,
+            checked_func = function()return read(key, default) == true end,
+            callback = function(menu)
+                save(key, read(key, default) ~= true, menu)
+                -- Rebuild the active display from cache, including settings
+                -- opened through KOReader rather than the Slate editor.
+                if owner and owner._slate_screen then
+                    if type(owner.refreshWeatherScreen) == "function" then
+                        owner:refreshWeatherScreen(true)
+                    end
+                    UIManager:setDirty(nil, "full")
+                end
+            end,
+        }
+    end
+    appearance[2].sub_item_table[#appearance[2].sub_item_table + 1] =
+        borderToggle("remove_custom_widget_border", _("Remove widget border on custom background display"), false)
+    appearance[2].sub_item_table[#appearance[2].sub_item_table + 1] =
+        borderToggle("remove_cover_widget_border", _("Remove widget border on cover display"),
+            read("widget_border_enabled", true) ~= true)
 
     local corner_options = {
         { "slate_weather_widget_corner_radius", 40, _("Widget corner radius") },
