@@ -218,6 +218,4 @@ Lena2309 also credits [yogi81’s screenlock_koreader_plugin](https://github.com
 
 ### 📜 Licence
 
-Slate’s derivative plugin code is distributed under the **GNU Affero General Public License v3.0**; see [LICENSE](LICENSE). Preserve upstream copyright, licence and modification notices. Adapted PIN-pad components retain their MIT notice; third-party assets retain their applicable licences.
-
-The ZenOS-derived Kindle Wi-Fi and Bluetooth modules retain their **GNU General Public License v3.0** notices. GPLv3 section 13 permits their combination with AGPLv3 code. The GPLv3 licence text is included in `slate_system_licenses.lua`; preserve that file and the attribution/modification notices when redistributing these modules.
+Slate’s derivative plugin code is distributed under the **GNU Affero General Public License v3.0**; see [LICENSE](LICENSE). Adapted ZenOS modules retain their **GPLv3** notices, PIN-pad components retain their **MIT** notice, and third-party assets retain their applicable licences. Preserve all upstream copyright, licence and modification notices, together with the bundled licence texts.
