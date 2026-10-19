@@ -484,8 +484,8 @@ function PinPad:buildMenu(owner)
     return {
         {
             text=_("Long press lock for Slate settings"),
-            checked_func=function()return read("long_press_settings",false)==true end,
-            callback=function(menu)save("long_press_settings",read("long_press_settings",false)~=true);updateMenu(menu)end,
+            checked_func=function()return read("long_press_settings",true)==true end,
+            callback=function(menu)save("long_press_settings",read("long_press_settings",true)~=true);updateMenu(menu)end,
         },
         {
             text = _("Enabled"),

@@ -597,17 +597,20 @@ function ThreeSectionCard:paintTo(bb, x, y)
         progress = math.max(0, math.min(1, progress))
         local line = weather_enabled and bookRect(0.66, 0.16) or bookRect(0.60, 0.24)
         book_labels_bottom = line.y - math.max(2, math.floor(inner_h * 0.02))
+        -- Shorten the weather-off progress region without changing title width.
+        local progress_w = weather_enabled and book_w or math.floor(book_w*.95)
         local percent_w = math.max(1, math.floor(book_w * 0.23))
         local old_gap = math.max(2, math.floor(book_w * 0.015))
         local text_w = cardText(bb, string.format("%i%%", math.floor(progress * 100 + 0.5)),
-            { x = line.x + book_w - percent_w, y = line.y, w = percent_w, h = line.h },
+            { x = line.x + progress_w - percent_w, y = line.y, w = percent_w, h = line.h },
             bookSize("slate_weather_widget_progress_font_size", 26),
             foreground, true, weather_enabled and "center" or "right")
         -- Include the percentage's centering inset when halving the visible gap.
         local inset = math.max(0, weather_enabled and math.floor((percent_w - text_w) / 2) or percent_w - text_w)
         local gap = math.max(1, math.floor((old_gap + (weather_enabled and inset or 0)) / 2))
-        local bar_w = math.max(1, book_w - percent_w + inset - gap)
-        book_label_width = bar_w
+        if not weather_enabled then gap=gap*2 end
+        local bar_w = math.max(1, progress_w - percent_w + inset - gap)
+        book_label_width = weather_enabled and bar_w or math.max(1,book_w-percent_w+inset-math.floor(gap/2))
         local bar_h = math.max(1, math.min(
             math.floor(getUserSize("slate_weather_widget_progress_height", 6) * (weather_enabled and 1 or book_w/content_w)),
             math.floor(line.h / 3)))

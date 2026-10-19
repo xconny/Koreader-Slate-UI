@@ -213,6 +213,7 @@ local function make_quote_widget(entry, page_index, opts)
 
     local widget
     widget = QuoteWidget:new{
+        slate_owner=automatic_owner,
         entry = normalized_entry,
         face = plugin_get_face(),
         quote_font_size = plugin_font_size,
@@ -325,6 +326,7 @@ local function show_sample()
 end
 
 local SlateQuotes = {}
+function SlateQuotes:getSlateOwner()return automatic_owner end
 
 local function favouriteKey(entry)
     return tostring(entry.file or entry.book or '')..'\n'..tostring(entry.text or ''):gsub('%s+',' '):gsub('^%s+',''):gsub('%s+$','')
@@ -395,12 +397,12 @@ function SlateQuotes:removeTag(name)
     end
     write_setting('tagged_quotes',all)
 end
-function SlateQuotes:newTag(entry,parent)
+function SlateQuotes:newTag(entry,parent,on_created)
     local InputDialog=require('ui/widget/inputdialog');local dialog
     dialog=InputDialog:new{modal=true,title=_('New Tag'),input='',buttons={{{text=_('Cancel'),callback=function()UIManager:close(dialog)end},
         {text=_('Add'),is_enter_default=true,callback=function()
             if self:addTag(dialog:getInputText(),entry)then
-                UIManager:close(dialog);UIManager:setDirty(nil,'ui')
+                UIManager:close(dialog);if on_created then on_created()end;UIManager:setDirty(nil,'ui')
                 if UIManager.forceRePaint then UIManager:forceRePaint()end
             end
         end}}}}
@@ -455,17 +457,88 @@ function SlateQuotes:selectTags()
         write_setting('selected_tags',selected);self:viewTags()
     end)
 end
+function SlateQuotes:renameTag(old_name,new_name)
+    new_name=tostring(new_name or ''):gsub('^%s+',''):gsub('%s+$','')
+    local registry=tagData('tags')
+    if new_name=='' then return false,_('Enter a tag name.')end
+    if not registry[old_name] then return false,_('This tag no longer exists.')end
+    if old_name==new_name then return true,new_name end
+    if registry[new_name] then return false,_('A tag with this name already exists.')end
+    registry[old_name]=nil;registry[new_name]=true
+    local selected=tagData('selected_tags')
+    if selected[old_name]then selected[old_name]=nil;selected[new_name]=true end
+    local all=tagData('tagged_quotes')
+    for _,record in pairs(all)do
+        if type(record)=='table' and type(record.tags)=='table' and record.tags[old_name]then
+            record.tags[old_name]=nil;record.tags[new_name]=true
+        end
+    end
+    write_setting('tags',registry);write_setting('selected_tags',selected);write_setting('tagged_quotes',all)
+    return true,new_name
+end
+function SlateQuotes:editTagName(name,on_changed)
+    local dialog
+    dialog=require('ui/widget/inputdialog'):new{modal=true,title=_('Edit Tag Name'),input=name,
+        buttons={{{text=_('Cancel'),callback=function()UIManager:close(dialog)end},
+            {text=_('Save'),is_enter_default=true,callback=function()
+                local ok,result=self:renameTag(name,dialog:getInputText())
+                if ok then
+                    UIManager:close(dialog)
+                    if on_changed then on_changed(result)end
+                    UIManager:setDirty(nil,'ui')
+                else
+                    UIManager:show(SlateUtils:themePopup(require('ui/widget/infomessage'):new{modal=true,text=result}))
+                end
+            end}}}}
+    UIManager:show(SlateUtils:themePopup(dialog));UIManager:setDirty(nil,'ui');dialog:onShowKeyboard()
+end
 function SlateQuotes:manageTags()
-    local items={{text=_('+ Add Tag'),callback=function()self:newTag()end}}
-    for index,name in ipairs(tagNames())do
+    local Menu=require('ui/widget/menu')
+    local CenterContainer=require('ui/widget/container/centercontainer')
+    local Screen=require('device').screen
+    local owner=automatic_owner or {}
+    if owner._slate_tag_manager then return end
+    local container,menu
+    local function close()
+        if not container then return end
+        local current=container;container=nil
+        if owner._slate_tag_manager==current then owner._slate_tag_manager=nil end
+        UIManager:close(current);UIManager:setDirty(nil,'ui')
+    end
+    local function reopen()
+        close();UIManager:nextTick(function()self:manageTags()end)
+    end
+    local items={{text=_('+ Add Tag'),callback=function()self:newTag(nil,nil,reopen)end}}
+    for tag_index,name in ipairs(tagNames())do
+        items[#items+1]={text=_('Edit Tag Name')..': '..name,callback=function()
+            self:editTagName(name,reopen)
+        end}
         items[#items+1]={text=_('− Remove Tag')..': '..name,callback=function()
             local ConfirmBox=require('ui/widget/confirmbox')
             UIManager:show(SlateUtils:themePopup(ConfirmBox:new{modal=true,text=_('Remove tag')..' “'..name..'”?',
-                ok_callback=function()self:removeTag(name);UIManager:setDirty(nil,'ui')end}))
+                ok_callback=function()self:removeTag(name);reopen()end}))
         end}
     end
-    items[#items+1]={text=_('Apply'),_slate_apply=true,callback=function()end}
-    require('slate_settings'):showEditor(automatic_owner or {},items)
+    items[#items+1]={text=_('Done'),callback=close}
+    container=CenterContainer:new{modal=true,dimen=Screen:getSize()}
+    menu=Menu:new{title=_('MANAGE TAGS'),item_table=items,show_parent=container,
+        width=math.min(math.floor(Screen:getWidth()*.9),Screen:scaleBySize(800)),
+        height=math.floor(Screen:getHeight()*.65),close_callback=close}
+    container[1]=SlateUtils:themePopup(menu)
+    menu.onCloseAllMenus=function()close();return true end
+    menu.onTapCloseAllMenus=function(_,arg,ges)
+        local r,pos=menu.dimen,ges and ges.pos
+        if r and pos and(pos.x<r.x or pos.x>=r.x+r.w or pos.y<r.y or pos.y>=r.y+r.h)then
+            if require('slate_popup_navigation'):switch(container,owner,ges)then return true end
+            close();return true
+        end
+    end
+    container.onCloseWidget=function()
+        if owner._slate_tag_manager==container then owner._slate_tag_manager=nil end
+        UIManager:setDirty(nil,'ui')
+    end
+    owner._slate_tag_manager=container
+    UIManager:show(container,'ui')
 end
 function SlateQuotes:showTagsMenu(parent)
     require('slate_quote_widget'):showTagMenuRows(parent or active_quote_widget,{

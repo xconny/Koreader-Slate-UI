@@ -195,6 +195,8 @@ function BookPicker:init()
         h = self.row_h,
     }
     self.ges_events = {
+        Hold = {GestureRange:new{ges="hold",range=self.dimen}},
+        HoldRelease = {GestureRange:new{ges="hold_release",range=self.dimen}},
         Tap = { GestureRange:new{ ges = "tap", range = self.dimen } },
         Swipe = { GestureRange:new{ ges = "swipe", range = self.dimen } },
     }
@@ -288,9 +290,20 @@ function BookPicker:onSwipe(_, ges)
     return true
 end
 
+function BookPicker:onHold(_,ges)
+    if not contains(self.box,ges and ges.pos)then
+        require('slate_popup_navigation'):switch(self,nil,ges,'hold')
+    end
+    return true
+end
+function BookPicker:onHoldRelease()return true end
+
 function BookPicker:onTap(_, ges)
     local pos = ges and ges.pos
-    if not contains(self.box, pos) then return self:onClose() end
+    if not contains(self.box,pos)then
+        if require('slate_popup_navigation'):switch(self,nil,ges)then return true end
+        return self:onClose()
+    end
     if contains(self.up_button, pos) then return self:onScrollUp() end
     if contains(self.down_button, pos) then return self:onScrollDown() end
     if contains(self.apply_button, pos) then
@@ -372,7 +385,9 @@ function QuoteActions:init()
             y = self.box.y + self.pad + (index - 1) * (self.row_h + self.gap),
             w = self.box.w - self.pad * 2, h = self.row_h, item = item}
     end
-    self.ges_events = {Tap = {GestureRange:new{ges = "tap", range = self.dimen}}}
+    self.ges_events = {
+        Hold = {GestureRange:new{ges="hold",range=self.dimen}},
+        HoldRelease = {GestureRange:new{ges="hold_release",range=self.dimen}},Tap = {GestureRange:new{ges = "tap", range = self.dimen}}}
     if Device:hasKeys() then self.key_events = {Close = {{"Back"}}} end
 end
 
@@ -409,9 +424,20 @@ function QuoteActions:paintTo(bb)
     end
 end
 
+function QuoteActions:onHold(_,ges)
+    if not contains(self.box,ges and ges.pos)then
+        require('slate_popup_navigation'):switch(self,nil,ges,'hold')
+    end
+    return true
+end
+function QuoteActions:onHoldRelease()return true end
+
 function QuoteActions:onTap(arg, ges)
     local pos = ges and ges.pos
-    if not contains(self.box, pos) then return self:onClose() end
+    if not contains(self.box,pos)then
+        if require('slate_popup_navigation'):switch(self,nil,ges)then return true end
+        return self:onClose()
+    end
     for index, button in ipairs(self.buttons) do
         if contains(button, pos) then
             local owner, action = self.owner, button.item.action
@@ -584,7 +610,7 @@ function QuoteWidget:init()
     end
     self.meta_rect={x=inner_x+cover_w+self.pad,y=book_y,w=meta_w,h=book_h}
     local controls_x=inner_x+inner_w-pager_w
-    self.controls_rect={x=controls_x,y=book_y+math.max(0,math.floor((book_h-reference_line-reference_nav)/2)),w=pager_w,
+    self.controls_rect={x=controls_x,y=book_y+math.max(0,math.floor((book_h-reference_line-reference_nav-math.max(1,math.floor(self.pad/3))*2)/2)),w=pager_w,
         line_h=reference_line,nav_h=reference_nav}
     self.book_page_rect={x=controls_x,y=book_y,w=pager_w-action_size-self.gap,h=reference_line}
     self.book_eye={x=inner_x+inner_w-action_size,y=book_y,w=action_size,h=action_size}
@@ -719,6 +745,7 @@ function QuoteWidget:paintTo(bb)
     local c=self.controls_rect
     local controls=require('slate_book_highlights'):paintQuoteControls(bb,{entry=self.entry,x=c.x,y=c.y,w=c.w,pad=self.pad,
         line_h=c.line_h,nav_h=c.nav_h,mode='highlights',file=self.entry.file,book_page=self.entry.page,
+        random_quotes=self.filter_mode~='tags',
         quote_total=self.tagged_total or math.max(1,#history.items),quote_index=self.tagged_index or math.max(1,history.index),
         page_total=self.max_pages,parts=self.max_pages,part=self.current_page})
     self.tag_button=controls.tag
@@ -784,6 +811,10 @@ function QuoteWidget:onShow()
 end
 
 function QuoteWidget:onHold(_,ges)
+    if self.box and not contains(self.box,ges and ges.pos)then
+        require('slate_popup_navigation'):switch(self,self.slate_owner,ges,'hold')
+        return true
+    end
     if contains(self.cover_rect,ges and ges.pos) then
         return require('slate_book_highlights'):showCoverPreview(self)
     end
@@ -831,6 +862,7 @@ end
 function QuoteWidget:onTap(_, ges)
     local pos = ges and ges.pos
     if not contains(self.box, pos) then
+        if require('slate_popup_navigation'):switch(self,self.slate_owner,ges)then return true end
         if self.dismissable then return self:onClose() end
         return true
     end
@@ -931,6 +963,8 @@ function QuoteWidget:onPreviousQuote()
 end
 function QuoteWidget:onNextQuote()
     if self.filter_mode=="tags" and self.on_tag_turn then return self.on_tag_turn(1)end
+    local history=quote_history[self.history_key]
+    if not history or history.index>=#history.items then return self:onNewQuote()end
     return self:turnQuoteHistory(1)
 end
 

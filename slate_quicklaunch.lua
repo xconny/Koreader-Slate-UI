@@ -347,6 +347,8 @@ function QuickLaunchPopup:init()
     self.font_size = 18
 
     self.ges_events = {
+        Hold = {GestureRange:new{ges="hold",range=Geom:new{x=0,y=0,w=w,h=h}}},
+        HoldRelease = {GestureRange:new{ges="hold_release",range=Geom:new{x=0,y=0,w=w,h=h}}},
         Tap = {
             GestureRange:new{
                 ges = "tap",
@@ -704,9 +706,18 @@ function QuickLaunchPopup:paintHeaderCircle(bb,rect)
     end
 end
 
+function QuickLaunchPopup:onHold(_,ges)
+    if not contains(self.box,ges and ges.pos)then
+        require('slate_popup_navigation'):switch(self,self.owner,ges,'hold')
+    end
+    return true
+end
+function QuickLaunchPopup:onHoldRelease()return true end
+
 function QuickLaunchPopup:onTap(_, ges)
     local pos = ges and ges.pos
-    if not contains(self.box, pos) then
+    if not contains(self.box,pos)then
+        if require('slate_popup_navigation'):switch(self,self.owner,ges)then return true end
         return self:onClose()
     end
 

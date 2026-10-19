@@ -990,6 +990,7 @@ function Settings:showEditor(owner,custom_items)
         local r=instance.menu_frame.dimen
         local pos=ges and ges.pos
         if r and r.x and pos and (pos.x<r.x or pos.x>=r.x+r.w or pos.y<r.y or pos.y>=r.y+r.h) then
+            if require('slate_popup_navigation'):switch(host,owner,ges)then return true end
             close();return true
         end
     end

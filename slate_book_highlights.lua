@@ -180,7 +180,10 @@ function DiagnosticsPopup:turn(delta)
 end
 function DiagnosticsPopup:onTap(_,ges)
     local pos=ges and ges.pos
-    if not contains(self.box,pos) then return self:onClose() end
+    if not contains(self.box,pos)then
+        if require('slate_popup_navigation'):switch(self,nil,ges)then return true end
+        return self:onClose()
+    end
     if contains(self.prev,pos) then return self:turn(-1) end
     if contains(self.next,pos) then return self:turn(1) end
     return true
@@ -242,7 +245,10 @@ function CoverPreview:paintTo(bb)
         self.image:paintTo(bb,r.x+self.pad,r.y+self.pad)
     else text(bb,_('Cover not available.'),{x=r.x+self.pad,y=r.y+self.pad,w=r.w-self.pad*2,h=r.h-self.pad*2},16,false,true) end
 end
-function CoverPreview:onTap()return self:onClose()end
+function CoverPreview:onTap(_,ges)
+    if require('slate_popup_navigation'):switch(self,nil,ges)then return true end
+    return self:onClose()
+end
 function CoverPreview:onClose()UIManager:close(self);return true end
 function CoverPreview:onCloseWidget()
     if self.image then self.image:free();self.image=nil end
@@ -270,7 +276,7 @@ function Popup:prepareHeader()
         if self.header_title_h+self.author_h+self.author_gap<=self.cover_h or size==10 then break end
         self.header_title:free()
     end
-    self.header_h=math.max(self.cover_h,self.line_h+self.nav_h)
+    self.header_h=math.max(self.cover_h,self.line_h+self.nav_h+math.max(1,math.floor(self.pad/3))*2)
     self.divider_gap=math.max(2,math.floor(self.pad/2))*3
     self.divider_y=self.box.y+self.pad+self.header_h+self.divider_gap+(self.search_title_h or 0)
     self.body.y=self.divider_y+self.divider_gap
@@ -459,20 +465,16 @@ end
 function Browser:paintQuoteControls(bb,o)
     local result={}
     local right_x,pager_w,controls_y=o.x,o.w,o.y
-    local nav_y=controls_y+o.line_h
+    local icon_gap=math.max(1,math.floor(o.pad/3))
+    local nav_y=controls_y+math.max(o.line_h,math.max(24,Screen:scaleBySize(32)))+icon_gap*2
     local has_quote=o.entry and o.entry.text and o.entry.text~=''
     local star_space=has_quote and 2*(math.max(24,Screen:scaleBySize(32))+math.max(1,math.floor(o.pad/3))) or 0
     if o.mode=='highlights' and o.file and o.file~='' then
         local size=math.max(24,Screen:scaleBySize(32))
         local icon_gap=math.max(1,math.floor(o.pad/3))
         result.jump={x=right_x+pager_w-size-star_space,y=controls_y,w=size,h=size}
-        result.book_page_link={x=right_x,y=controls_y,w=pager_w-size-star_space-math.max(1,math.floor(o.pad/3)),h=o.line_h}
-        local dot=TextWidget:new{text='•',face=Font:getFace('infofont',14),bold=true}
-        local dot_w=dot:getSize().w;dot:free()
-        result.dot={x=result.jump.x-icon_gap-dot_w,y=controls_y,w=dot_w,h=o.line_h}
-        result.book_label={x=right_x,y=controls_y,w=math.max(1,result.dot.x-icon_gap-right_x),h=o.line_h}
-        text(bb,_('BOOK PAGE')..(o.book_page and ' '..tostring(o.book_page) or ''),result.book_label,14,true,'right')
-        text(bb,'•',result.dot,14,true,true)
+        -- Navigation remains on the eye; omit the former BOOK PAGE label/dot.
+        result.book_page_link=nil
         local icon
         local ok=pcall(function()
             icon=ImageWidget:new{file=module_dir..'icons/view.svg',width=size,height=size,
@@ -510,44 +512,71 @@ function Browser:paintQuoteControls(bb,o)
         if not ok then text(bb,marked and '◆' or '◇',result.tag,24,true,true)end
     end
     if o.mode=='highlights' and o.quote_total==0 then return result end
-    local function pager(label,index,total,rect,font_size)
-        local arrow_w=math.max(12,math.floor(rect.w*.16))
-        local gap=math.max(2,Screen:scaleBySize(2))
-        local prev={x=rect.x,y=rect.y,w=arrow_w,h=rect.h}
-        local next={x=rect.x+rect.w-arrow_w,y=rect.y,w=arrow_w,h=rect.h}
-        text(bb,'‹',prev,48,true,true);text(bb,'›',next,48,true,true)
-        text(bb,label..' '..index..' / '..total,
-            {x=rect.x+arrow_w+gap,y=rect.y,w=math.max(1,rect.w-arrow_w*2-gap*2),h=rect.h},font_size,false,true)
-        return prev,next
-    end
     local gap=math.max(4,math.floor(o.pad*.25))
+    local inset=gap*2
+    local pill_gap=gap*3
     local quote_total=o.quote_total or 1
-    local page_total=o.page_total or 1
-    local function requiredWidth(label,total,size)
-        local widget=TextWidget:new{text=label..' '..total..' / '..total,face=Font:getFace('infofont',size)}
-        local d=widget:getSize();widget:free()
-        local inset=math.max(2,Screen:scaleBySize(2))
-        return math.ceil(math.max((d.w+inset*2)/.68,d.w+inset*2+24)),d.h
+    local page_total=o.parts or o.page_total or 1
+    local show_quote=o.mode=='highlights'
+    local random_quote=show_quote and o.random_quotes==true
+    local show_pages=page_total>1
+    local function sizeOf(value,size,bold)
+        local widget=TextWidget:new{text=value,face=Font:getFace('infofont',size),bold=bold}
+        local d=widget:getSize();widget:free();return d.w,d.h
     end
-    local font_size,quote_w,pages_w=14
+    local function requiredWidth(label,total,size,arrows)
+        local w,h=sizeOf(label..' '..total..'/'..total,size,false)
+        if not arrows then return w,h end
+        local arrow_size=math.max(6,size)
+        local left=label==_('Quote No.')and '↑'or '←'
+        local right=label==_('Quote No.')and '↓'or '→'
+        local aw,ah=sizeOf(left,arrow_size,true)
+        local bw,bh=sizeOf(right,arrow_size,true)
+        return math.ceil(w+math.max(aw,bw)*2+inset*4),math.max(h,ah,bh)
+    end
+    local font_size,quote_w,pages_w=14,0,0
     for size=14,6,-1 do
-        local q,qh=requiredWidth(_('Quote No.'),quote_total,size)
-        local p,ph=requiredWidth(_('Pages'),page_total,size)
+        local q,qh=0,0
+        if random_quote then
+            local tw,th=sizeOf(_('Next Quote'),size,false)
+            local aw,ah=sizeOf('↓',math.max(6,size),true)
+            local bw,bh=sizeOf('↑',math.max(6,size),true)
+            q,qh=tw+math.max(aw,bw)*2+inset*4,math.max(th,ah,bh)
+        elseif show_quote then q,qh=requiredWidth(_('Quote No.'),quote_total,size,true)end
+        local p,ph=0,0
+        -- Reserve the page pill while fitting even when it is hidden. This
+        -- keeps quote controls from enlarging on single-page quotes.
+        if show_pages or show_quote then p,ph=requiredWidth(_('Pages'),math.max(2,page_total,o.page_total or 1),size,true)end
         font_size,quote_w,pages_w=size,q,p
-        if q+p+gap<=pager_w and math.max(qh,ph)<=o.nav_h then break end
+        if q+p+(show_quote and pill_gap or 0)<=pager_w and math.max(qh,ph)<=o.nav_h then break end
     end
-    local width=math.floor(quote_w+(pager_w-gap-quote_w-pages_w)/2)
-    width=math.max(1,math.min(pager_w-gap-1,width))
-    local quote_rect={x=right_x,y=nav_y,w=width,h=o.nav_h}
-    local pages_rect={x=right_x+width+gap,y=nav_y,w=pager_w-width-gap,h=o.nav_h}
-    if o.mode=='highlights' then
-        if (o.parts or 1)<=1 then quote_rect.x=right_x+pager_w-quote_rect.w end
-        if quote_total>1 then
-            result.quote_prev,result.quote_next=pager(_('Quote No.'),o.quote_index or 1,quote_total,quote_rect,font_size)
-        else text(bb,_('Quote No.')..' 1 / 1',quote_rect,font_size,false,true) end
-        if (o.parts or 1)>1 then result.prev,result.next=pager(_('Pages'),o.part or 1,o.parts,pages_rect,font_size) end
-    elseif (o.parts or 0)>1 then
-        result.prev,result.next=pager(_('Pages'),o.part or 1,o.parts,pages_rect,font_size)
+    local function pager(label,index,total,rect,vertical,no_counter)
+        local arrow_size=math.max(6,font_size)
+        local left,right=vertical and '↑'or '←',vertical and '↓'or '→'
+        local aw=sizeOf(left,arrow_size,true)
+        local bw=sizeOf(right,arrow_size,true)
+        local arrow_w=math.max(aw,bw)
+        bb:paintBorder(rect.x,rect.y,rect.w,rect.h,1,BB.COLOR_BLACK,math.floor(rect.h/2))
+        text(bb,left,{x=rect.x+inset,y=rect.y,w=arrow_w,h=rect.h},arrow_size,true,true)
+        text(bb,right,{x=rect.x+rect.w-inset-arrow_w,y=rect.y,w=arrow_w,h=rect.h},arrow_size,true,true)
+        text(bb,no_counter and label or label..' '..index..'/'..total,
+            {x=rect.x+arrow_w+inset*2,y=rect.y,w=math.max(1,rect.w-arrow_w*2-inset*4),h=rect.h},font_size,false,true)
+        return {x=rect.x,y=rect.y,w=rect.w/2,h=rect.h},
+            {x=rect.x+rect.w/2,y=rect.y,w=rect.w/2,h=rect.h}
+    end
+    local combined=quote_w+(show_pages and pages_w or 0)+(show_quote and show_pages and pill_gap or 0)
+    local x=right_x+pager_w-combined
+    if show_quote then
+        local rect={x=x,y=nav_y,w=quote_w,h=o.nav_h}
+        result.quote_pill=rect
+        result.quote_prev,result.quote_next=pager(random_quote and _('Next Quote')or _('Quote No.'),
+            o.quote_index or 1,quote_total,rect,true,random_quote)
+        x=x+quote_w+pill_gap
+    end
+    if show_pages then
+        local rect={x=right_x+pager_w-pages_w,y=nav_y,w=pages_w,h=o.nav_h}
+        result.pages_pill=rect
+        result.prev,result.next=pager(_('Pages'),o.part or 1,page_total,rect,false)
     end
     return result
 end
@@ -893,7 +922,10 @@ function Popup:toggleFavourite()
 end
 function Popup:onTap(_,ges)
     local pos=ges and ges.pos
-    if not contains(self.box,pos) then return self:onClose() end
+    if not contains(self.box,pos)then
+        if require('slate_popup_navigation'):switch(self,self.owner,ges)then return true end
+        return self:onClose()
+    end
     for _,button in ipairs(self.tab_buttons or {}) do
         if contains(button,pos) then return self:changeTab(button.tab) end
     end
@@ -916,6 +948,10 @@ function Popup:onTap(_,ges)
     return true
 end
 function Popup:onHold(_,ges)
+    if self.box and not contains(self.box,ges and ges.pos)then
+        require('slate_popup_navigation'):switch(self,self.owner,ges,'hold')
+        return true
+    end
     if not contains(self.cover_link,ges and ges.pos) or self.cover_preview then return true end
     return Browser:showCoverPreview(self)
 end

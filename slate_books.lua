@@ -181,6 +181,20 @@ local function drawText(bb, text, rect, size, bold, centered, color, family)
     return x, math.min(rect.w, dim.w)
 end
 
+-- Measure the full string before painting: max_width would silently truncate
+-- dates/counters before the fitting loop had a chance to reduce the font.
+local function drawFittedText(bb,label,r,size,bold,centered)
+    local widget,dim
+    for font_size=size,1,-1 do
+        widget=TextWidget:new{text=tostring(label or ''),face=Font:getFace('cfont',font_size),bold=bold,fgcolor=Blitbuffer.COLOR_BLACK}
+        dim=widget:getSize()
+        if (dim.w<=r.w and dim.h<=r.h)or font_size==1 then break end
+        widget:free()
+    end
+    widget:paintTo(bb,r.x+(centered=='right' and math.max(0,r.w-dim.w)or centered and math.max(0,math.floor((r.w-dim.w)/2))or 0),r.y+math.max(0,math.floor((r.h-dim.h)/2)))
+    widget:free()
+end
+
 function Books:getOptions(kind)
     kind = kind == "recents" and "recents" or "library"
     return {
@@ -455,15 +469,7 @@ function Popup:init()
         h = math.floor(h * 0.80),
     }
     self.box.x = math.floor((w - self.box.w) / 2)
-    local slate_screen = self.owner and self.owner._slate_screen
-    local lock = slate_screen and slate_screen.lock_button
-    local top = lock and (lock.y + math.floor(lock.h * (self.kind=="library" and 0.55 or 0.65))) or Screen:scaleBySize(90)
-    local edge = math.max(8, Screen:scaleBySize(10))
-    self.box.y = math.max(edge, math.min(math.floor(top), h - edge - 1))
-    self.box.h = math.max(1, math.min(self.box.h, h - self.box.y - edge))
-    if self.owner and self.owner._slate_location_line_top then
-        self.box.y=math.max(edge,math.floor(self.owner._slate_location_line_top)-Screen:scaleBySize(4)-self.box.h)
-    end
+    self.box.y = self.box.x
     self.padding_base_h = self.box.h
     self.pad = math.max(10, math.floor(self.box.w * 0.035))
     self.bottom_pad = math.max(10, math.floor(math.min(
@@ -533,6 +539,7 @@ end
 
 function Popup:addTile(entry, rect, progress, rounded, aspect)
     local cover = self:coverRect(rect, progress, aspect)
+    if self.kind=="recents" and self.view=="recents" then cover.y=rect.y end
     self.tiles[#self.tiles + 1] = {
         entry = entry, rect = rect, cover = cover,
         progress = progress, rounded = rounded,
@@ -540,400 +547,147 @@ function Popup:addTile(entry, rect, progress, rounded, aspect)
 end
 
 function Popup:rebuild()
-    self.padding_base_h=self.padding_base_h or self.box.h
-    self.box.h=self.folder and self.folder_window_h or self.padding_base_h
-    self.padding_base_y=self.padding_base_y or self.box.y
-    local reset_y=self.padding_base_y-self.box.y
-    self.box.y=self.padding_base_y
-    self.content.y=self.content.y+reset_y
-    self.generation = self.generation + 1
+    local c,o=self.content,self.options
+    local screen_w,screen_h=Screen:getWidth(),Screen:getHeight()
+    -- One stable frame for every tab/page, independent of visible row count.
+    self.box.x=math.floor((screen_w-self.box.w)/2)
+    self.box.y=self.box.x
+    local dock=self.owner and self.owner._slate_card_bounds
+    local dock_top=dock and dock.y or math.floor(screen_h*.82)
+    local bottom=math.min(screen_h-self.box.x,dock_top-self.bottom_pad)
+    self.box.h=math.max(1,bottom-self.box.y)
+    self.padding_base_h,self.padding_base_y=self.box.h,self.box.y
+    c.x=self.box.x+self.pad;c.w=self.box.w-self.pad*2
+    local header_bottom=self.box.y+self.pad+self.title_h
+    local button_y=self.box.y+self.box.h-self.bottom_pad-self.button_h
+    c.y=header_bottom+self.bottom_pad
+    c.h=math.max(1,button_y-self.bottom_pad-c.y)
+    self.generation=self.generation+1
     self:cancelCoverLoad()
-    self.tiles, self.category_headers = {}, {}
-    self.pages = 1
-    local c, o = self.content, self.options
-    local row_gap = math.max(self.gap, math.floor(c.w * 0.035))
-    self.cover_row_gap = row_gap
-    local footer_gap = self.view == "progress" and self.pager_gap or row_gap
-    c.h = self.box.h - self.pad - self.bottom_pad - self.title_h - self.title_gap
-        - self.button_h - footer_gap
-    if self.view == "progress" then
-        c.h = c.h - self.pager_h - self.pager_gap
-    end
-    self.folder_title_rect = nil
-    if self.view == "progress" then
-        self.title_x = c.x
+    self.tiles,self.category_headers={},{}
+    self.pages=1;self.title_x=c.x;self.folder_title_rect=nil
+    if self.view=='progress'then
+        self.cover_layout=nil
         self:loadReadingProgress()
         return
     end
-
-    local categories = self.view == "categories" and not self.folder
-    local columns = categories and o.category_columns or o.columns
-    local limit = categories and o.category_rows or o.rows
-    local tile_w = math.floor((c.w - self.gap * (columns - 1)) / columns)
-    local title_h = math.max(24, Screen:scaleBySize(27))
-    if categories or self.folder then
-        local _, heading_h = textSize("Ag", self.font_size, true)
-        title_h = heading_h + 8
-    end
-    local title_space = (categories or self.folder) and title_h + self.gap or 0
-    local progress = not categories and o.progress
-    local progress_space = progress and math.max(20, Screen:scaleBySize(19)) + self.gap or 0
-    local groups = {}
+    local categories=self.view=='categories' and not self.folder
+    local columns=categories and o.category_columns or o.columns
+    local rows=categories and o.category_rows or o.rows
+    local tile_w=math.max(1,math.floor((c.w-self.gap*(columns-1))/columns))
+    local _,font_h=textSize('Ag',self.font_size,true)
+    local heading_h=font_h+8
+    local progress=not categories and o.progress
+    local progress_space=progress and math.max(20,Screen:scaleBySize(19))+self.gap or 0
+    local row_gap=math.max(self.gap,math.floor(self.bottom_pad*.5))
+    local heading_gap=self.gap
+    local groups={}
     if categories then
-        self.pages = math.max(1, math.ceil(#self.folders / limit))
-        self.page = math.max(1, math.min(self.page, self.pages))
-        local first = (self.page - 1) * limit + 1
-        for index = 0, limit - 1 do
-            local folder = self.folders[first + index]
-            if not folder then break end
-            if not folder.books then folder.books = Books:scanDirectory(folder.file, true) end
-            local pages = math.max(1, math.ceil(#folder.books / columns))
-            local page = math.max(1, math.min(self.category_pages[folder.file] or 1, pages))
-            self.category_pages[folder.file] = page
-            local group = {entries = {}, folder = folder, pages = pages, page = page}
-            local start = (page - 1) * columns + 1
-            for column = 0, columns - 1 do
-                if folder.books[start + column] then
-                    group.entries[#group.entries + 1] = folder.books[start + column]
-                end
-            end
-            groups[#groups + 1] = group
+        self.pages=math.max(1,math.ceil(#self.folders/rows))
+        self.page=math.max(1,math.min(self.page,self.pages))
+        for index=(self.page-1)*rows+1,math.min(#self.folders,self.page*rows)do
+            local folder=self.folders[index]
+            if not folder.books then folder.books=Books:scanDirectory(folder.file,true)end
+            local pages=math.max(1,math.ceil(#folder.books/columns))
+            local page=math.max(1,math.min(self.category_pages[folder.file]or 1,pages))
+            self.category_pages[folder.file]=page
+            local entries={}
+            for i=(page-1)*columns+1,math.min(#folder.books,page*columns)do entries[#entries+1]=folder.books[i]end
+            groups[#groups+1]={folder=folder,entries=entries,pages=pages,page=page}
         end
     else
-        local entries = self.folder and self.folder.books or self.entries
-        local capacity = columns * limit
-        self.pages = math.max(1, math.ceil(#entries / capacity))
-        self.page = math.max(1, math.min(self.page, self.pages))
-        local first = (self.page - 1) * capacity + 1
-        local count = math.min(capacity, math.max(0, #entries - first + 1))
-        for index = 0, math.ceil(count / columns) - 1 do
-            local group = {entries = {}}
-            for column = 0, columns - 1 do
-                local entry = entries[first + index * columns + column]
-                if entry then group.entries[#group.entries + 1] = entry end
-            end
-            groups[#groups + 1] = group
+        local entries=self.folder and self.folder.books or self.entries
+        local capacity=columns*rows
+        self.pages=math.max(1,math.ceil(#entries/capacity))
+        self.page=math.max(1,math.min(self.page,self.pages))
+        local first=(self.page-1)*capacity+1
+        for index=first,math.min(#entries,first+capacity-1),columns do
+            local entries_row={}
+            for i=index,math.min(#entries,index+columns-1,first+capacity-1)do entries_row[#entries_row+1]=entries[i]end
+            groups[#groups+1]={entries=entries_row}
         end
     end
-
-    local header_bottom = self.box.y + self.pad + self.title_h
-    if G_reader_settings:readSetting("slate.popup_header_text", true) == true then
-        local label = self.kind == "recents" and _("HISTORY") or _("LIBRARY")
-        local _, height = textSize(label, self.font_size + 2, true)
-        header_bottom = self.box.y + self.pad + math.floor((self.title_h - height) / 2) + height
-    end
-    local button_y = self.box.y + self.box.h - self.bottom_pad - self.button_h
-    -- Reserve all configured folder slots, including empty trailing rows.
-    local visible_groups = #groups
-    if categories then
-        for row = visible_groups + 1, limit do
-            groups[row] = {entries = {}}
+    -- Keep category and Recents row slots stable across partially filled pages.
+    local available=math.max(1,button_y-header_bottom-self.bottom_pad*2)
+    local folder_space=self.folder and heading_h+heading_gap or 0
+    local row_heading=categories and heading_h+heading_gap or 0
+    local cover_budget=math.max(rows,available-folder_space-row_gap*(rows-1)-(row_heading+progress_space)*rows)
+    local row_height=math.max(1,math.floor(math.min(tile_w/.69,cover_budget/rows)))
+    for _,group in ipairs(groups)do
+        group.aspects={}
+        for i,entry in ipairs(group.entries)do
+            local path=thumbnailPaths(entry.file)
+            local width,height=pngSize(path)
+            group.aspects[i]=width and height and width/height or .69
         end
     end
-    local rows = limit
-    local minimum_gap = math.max(self.gap,
-        self.box.y + self.pad + self.title_h + self.title_gap - header_bottom
-    )
-    local available = math.max(1, button_y - header_bottom)
-    local gap_slots = categories and rows * 2 + 1 or rows + 1
-    local heading_space = categories and rows * title_h or 0
-    local heading_inset = categories and 4 or 0
-    local budget = math.max(rows, available - minimum_gap * gap_slots
-        - progress_space * rows - heading_space - heading_inset
-        - (not categories and title_space or 0))
-    local total_cap, largest_cap = 0, 1
-    for _, group in ipairs(groups) do
-        group.aspects = {}
-        group.cap = categories and 1 or tile_w / 0.80
-        for index, entry in ipairs(group.entries) do
-            local path = thumbnailPaths(entry.file)
-            local width, height = pngSize(path)
-            local aspect = width and height and width / height or 0.69
-            group.aspects[index] = aspect
-            -- Landscape covers fit inside the same row; they must not shrink
-            -- adjacent portrait covers or enlarge the next, partially full row.
-            if categories and aspect <= 1 then
-                group.cap = math.max(group.cap, tile_w / aspect)
-            end
-        end
-        if categories and group.cap == 1 then group.cap = tile_w / 0.69 end
-        total_cap = total_cap + group.cap
-        largest_cap = math.max(largest_cap, group.cap)
+    local block=folder_space+#groups*(row_height+row_heading+progress_space)+math.max(0,#groups-1)*row_gap
+    local stable_recents=self.kind=='recents' and self.view~='categories'
+    local slot_rows=stable_recents and math.min(rows,math.ceil(#self.entries/columns))or rows
+    local reserved=(categories or stable_recents)and (slot_rows*(row_height+row_heading+progress_space)+math.max(0,slot_rows-1)*row_gap)or block
+    local y=header_bottom+(button_y-header_bottom-reserved)/2
+    local first_row_gap=y-header_bottom
+    if self.folder then
+        self.folder_title_rect={x=c.x,y=math.floor(y+.5),w=c.w,h=heading_h}
+        y=y+folder_space
     end
-    local low, high = 1, largest_cap
-    if not categories then
-        local height = math.max(1, math.floor(math.min(tile_w / 0.80, budget / rows)))
-        low, high = height, height
-    elseif total_cap > budget then
-        for step = 1, 24 do
-            local level, total = (low + high) / 2, 0
-            for _, group in ipairs(groups) do total = total + math.min(group.cap, level) end
-            if total > budget then high = level else low = level end
-        end
-    else low, high = largest_cap, largest_cap end
-    local used = 0
-    for _, group in ipairs(groups) do
-        group.height = math.max(1, math.floor(math.min(group.cap, (low + high) / 2)))
-        used = used + group.height + progress_space
-    end
-    local reserved_used = not categories and (low + progress_space) * rows or used
-    local gap = math.max(self.gap, (available - reserved_used - heading_space - heading_inset
-        - (not categories and title_space or 0)) / gap_slots)
-    local title_cover_gap = gap
-    local footer_gap = gap + heading_inset
-    local first_row_gap = gap + (not categories and title_space or 0)
-    if categories then
-        title_cover_gap = self.gap
-        -- Anchor the first folder to the same grid start as Entire Library.
-        -- Category cover aspect ratios must not push this heading down.
-        local grid_rows = o.rows
-        local grid_w = math.floor((c.w - self.gap * (o.columns - 1)) / o.columns)
-        local grid_progress = o.progress and math.max(20, Screen:scaleBySize(19)) + self.gap or 0
-        local grid_budget = math.max(grid_rows, available - minimum_gap * (grid_rows + 1)
-            - grid_progress * grid_rows)
-        local grid_height = math.max(1, math.floor(math.min(grid_w / 0.80, grid_budget / grid_rows)))
-        first_row_gap = math.max(self.gap,
-            (available - (grid_height + grid_progress) * grid_rows) / (grid_rows + 1))
-            - heading_inset
-        first_row_gap = math.max(0, first_row_gap - math.floor(title_h * 0.55))
-        -- Keep padding fixed. Spare height belongs to the covers, rather than
-        -- being divided into increasingly large spaces around every folder.
-        footer_gap = row_gap
-        gap = math.max(self.gap, footer_gap - heading_inset)
-        local new_budget = math.max(rows, available - heading_space
-            - title_cover_gap * rows - footer_gap - first_row_gap - gap * (rows - 1)
-            - progress_space * rows)
-        local low, high = 1, largest_cap
-        if total_cap > new_budget then
-            for step = 1, 24 do
-                local level, total = (low + high) / 2, 0
-                for _, group in ipairs(groups) do total = total + math.min(group.cap, level) end
-                if total > new_budget then high = level else low = level end
-            end
-        else low, high = largest_cap, largest_cap end
-        used = 0
-        for _, group in ipairs(groups) do
-            group.height = math.max(1, math.floor(math.min(group.cap, (low + high) / 2)))
-            used = used + group.height + progress_space
-        end
-        -- Keep folders stacked with fixed gaps; spare height belongs below them.
-        local spare = math.max(0, available - used - heading_space
-            - title_cover_gap * rows - footer_gap - first_row_gap - gap * (rows - 1))
-        footer_gap = footer_gap + spare
-    end
-    if self.kind=="library" and categories and visible_groups>0 then
-        local previous_top,previous_bottom=first_row_gap,footer_gap
-        local margin=math.ceil(previous_bottom*2)
-        local edge=math.max(8,Screen:scaleBySize(10))
-        local desired=math.max(0,margin*2-previous_top-previous_bottom)
-        local extra=math.max(0,math.min(math.ceil(desired),Screen:getHeight()-edge-self.box.y-self.box.h))
-        self.box.h=self.box.h+extra
-        button_y=button_y+extra
-        available=available+extra
-        local heading_gaps=categories and title_cover_gap*rows or 0
-        local required=heading_space+heading_gaps+gap*(rows-1)+progress_space*rows
-        margin=math.min(margin,math.max(self.gap,(available-required-rows*20)/2))
-        first_row_gap,footer_gap=margin,margin
-        local room=math.max(rows,available-margin*2-required)
-        local low,high=1,largest_cap
-        for step=1,24 do
-            local level,total=(low+high)/2,0
-            for _,group in ipairs(groups) do total=total+math.min(group.cap,level) end
-            if total>room then high=level else low=level end
-        end
-        local used_height=0
-        for _,group in ipairs(groups) do
-            group.height=math.max(1,math.floor(math.min(group.cap,low)))
-            used_height=used_height+group.height
-        end
-        local remainder=math.max(0,math.floor(room)-used_height)
-        for _,group in ipairs(groups) do
-            if remainder>0 and group.height<math.ceil(group.cap) then
-                group.height=group.height+1;remainder=remainder-1
-            end
-        end
-    end
-    if self.kind=="library" and categories and visible_groups>0 then
-        -- Trim the visible outer gaps, including short final category pages.
-        local block=gap*math.max(0,visible_groups-1)
-        for index=1,visible_groups do
-            block=block+groups[index].height+progress_space+title_h+title_cover_gap
-        end
-        local bottom_gap=math.max(0,available-first_row_gap-block)
-        local top_trim=math.floor(first_row_gap*.20+.5)
-        local bottom_trim=math.floor(bottom_gap*.10+.5)
-        local trim=top_trim+bottom_trim
-        first_row_gap=first_row_gap-top_trim
-        footer_gap=bottom_gap-bottom_trim
-        self.box.h=self.box.h-trim
-        button_y=button_y-trim;available=available-trim
-        -- The category pager is one window. A short final page must retain
-        -- its established outer geometry instead of drawing a smaller frame
-        -- over the previous page. Recompute only when layout options change.
-        local key=table.concat({self.padding_base_h,self.box.w,rows,columns,
-            self.pad,self.bottom_pad,self.title_h,self.title_gap,self.button_h,
-            self.gap,Screen:getHeight()},":")
-        if self.category_frame_key~=key then
-            self.category_frame_key=key
-            self.category_frame_h=self.box.h
-        end
-        local delta=self.category_frame_h-self.box.h
-        self.box.h=self.category_frame_h
-        button_y=button_y+delta;available=available+delta
-        footer_gap=math.max(0,available-first_row_gap-block)
-        if delta<0 and first_row_gap+block>available then
-            local fixed=gap*math.max(0,visible_groups-1)
-                +(progress_space+title_h+title_cover_gap)*visible_groups
-            local total=block-fixed
-            local room=math.max(visible_groups,available-first_row_gap-fixed-self.gap)
-            local factor=math.min(1,room/math.max(1,total))
-            block=fixed
-            for i=1,visible_groups do
-                groups[i].height=math.max(1,math.floor(groups[i].height*factor))
-                block=block+groups[i].height
-            end
-            footer_gap=math.max(0,available-first_row_gap-block)
-        end
-    end
-    if self.kind=="library" and not categories then
-        if not self.folder then
-            -- Measure Categories without loading any images or modifying this view.
-            local reference=setmetatable({}, {__index=self})
-            reference.box={x=self.box.x,y=self.box.y,w=self.box.w,h=self.padding_base_h}
-            reference.content={x=c.x,y=c.y,w=c.w,h=c.h}
-            reference.assets={};reference.category_pages={}
-            reference.view="categories";reference.page=1
-            reference.cancelCoverLoad=function()end
-            reference.loadVisibleCovers=function()end
-            reference.addTile=function()end
-            reference:rebuild()
-            local extra=reference.box.h-self.box.h
-            self.box.h=reference.box.h;button_y=button_y+extra;available=available+extra
-        end
-        -- Center the actual rows, including a short final page, as one block.
-        local block=0
-        for _,group in ipairs(groups) do block=block+group.height+progress_space end
-        block=block+gap*math.max(0,visible_groups-1)+(self.folder and title_space or 0)
-        first_row_gap=math.max(0,(available-block)/2)+(self.folder and title_space or 0)
-        footer_gap=first_row_gap-(self.folder and title_space or 0)
-    end
-    -- Empty slots participate in sizing but have no headers or covers.
-    for row = #groups, visible_groups + 1, -1 do groups[row] = nil end
-    self.cover_row_gap = gap
-    self.cover_layout = {header_bottom = header_bottom, button_y = button_y,
-        gap = gap, rows = #groups, categories = categories, heading_inset = heading_inset,
-        title_cover_gap = title_cover_gap, footer_gap = footer_gap, first_row_gap = first_row_gap}
-    local y = header_bottom + first_row_gap
-    for row, group in ipairs(groups) do
-        local cover_y = math.floor(y + (categories and title_h + title_cover_gap or 0) + 0.5)
+    for _,group in ipairs(groups)do
         if categories then
-            local header_y = math.floor(y + 0.5)
-            local arrow_w = title_h
-            self.category_headers[#self.category_headers + 1] = {
-                folder = group.folder, pages = group.pages, page = group.page,
-                rect = {x = c.x, y = header_y, w = c.w - arrow_w * 2 - self.gap * 2, h = title_h},
-                previous = {x = c.x + c.w - arrow_w * 2 - self.gap, y = header_y, w = arrow_w, h = title_h},
-                next = {x = c.x + c.w - arrow_w, y = header_y, w = arrow_w, h = title_h},
-                body = {x = c.x, y = cover_y, w = c.w, h = group.height},
-            }
-        elseif self.folder and row == 1 then
-            self.folder_title_rect = {x = c.x, y = cover_y - title_space, w = c.w, h = title_h}
+            local arrow=heading_h
+            self.category_headers[#self.category_headers+1]={folder=group.folder,pages=group.pages,page=group.page,
+                rect={x=c.x,y=math.floor(y+.5),w=c.w-arrow*2-self.gap*2,h=heading_h},
+                previous={x=c.x+c.w-arrow*2-self.gap,y=math.floor(y+.5),w=arrow,h=heading_h},
+                next={x=c.x+c.w-arrow,y=math.floor(y+.5),w=arrow,h=heading_h},
+                body={x=c.x,y=math.floor(y+row_heading+.5),w=c.w,h=row_height}}
         end
-        for index, entry in ipairs(group.entries) do
-            self:addTile(entry, {
-                x = c.x + (index - 1) * (tile_w + self.gap), y = cover_y,
-                w = tile_w, h = group.height + progress_space,
-            }, progress, categories and o.category_rounded or o.rounded, group.aspects[index])
+        local cover_y=math.floor(y+row_heading+.5)
+        for i,entry in ipairs(group.entries)do
+            self:addTile(entry,{x=c.x+(i-1)*(tile_w+self.gap),y=cover_y,w=tile_w,h=row_height+progress_space},
+                progress,categories and o.category_rounded or o.rounded,group.aspects[i])
         end
-        y = y + group.height + progress_space + gap
-            + (categories and title_h + title_cover_gap or 0)
+        y=y+row_heading+row_height+progress_space+row_gap
     end
-    if self.folder_title_rect and #self.tiles>0 then
-        -- Center the visible heading and covers, rather than reserved row cells.
-        local heading=self.folder_title_rect
-        local heading_h=heading.h
-        local heading_ink_top=0
-        for size=self.font_size,6,-1 do
-            local width,height,ink_top=textSize(self.folder.title,size,true,nil,heading.w,true)
-            heading_h=height;heading_ink_top=ink_top or 0
-            if (width<=heading.w and height<=heading.h) or size==6 then break end
-        end
-        local visible_top=heading.y+math.max(0,math.floor((heading.h-heading_h)/2))+heading_ink_top
-        local visible_bottom=visible_top+heading_h
-        for _,tile in ipairs(self.tiles)do
-            local bottom=tile.cover.y+tile.cover.h
-            if tile.progress then
-                local line_h=math.max(20,Screen:scaleBySize(19))
-                local label_h,ink_bottom=line_h,line_h
-                for size=11,1,-1 do
-                    local width,height,_,ink=textSize("100%",size,false,nil,nil,true)
-                    if width+2<=tile.cover.w*.55 and height<=line_h then label_h,ink_bottom=height,ink or height;break end
-                end
-                local bar_h=math.max(2,Screen:scaleBySize(3))
-                bottom=bottom+self.gap+math.max(math.floor((line_h-label_h)/2)+ink_bottom,math.floor((line_h-bar_h)/2)+bar_h)
-            end
-            visible_bottom=math.max(visible_bottom,bottom)
-        end
-        local visible_header_bottom=header_bottom
-        if G_reader_settings:readSetting("slate.popup_header_text",true)==true then
-            local _,height,_,ink_bottom=textSize(_("LIBRARY"),self.font_size+2,true,nil,nil,true)
-            visible_header_bottom=self.box.y+self.pad+math.floor((self.title_h-height)/2)+(ink_bottom or height)
-        end
-        local dy=math.floor(visible_header_bottom+(button_y-visible_header_bottom-(visible_bottom-visible_top))/2-visible_top+.5)
-        self.cover_layout.header_bottom=visible_header_bottom
-        heading.y=heading.y+dy
-        local moved={}
-        for _,tile in ipairs(self.tiles)do
-            for _,rect in ipairs({tile.rect,tile.cover})do
-                if not moved[rect]then rect.y=rect.y+dy;moved[rect]=true end
-            end
-        end
-        first_row_gap=first_row_gap+dy
-        footer_gap=button_y-visible_bottom-dy
-        self.cover_layout.first_row_gap=first_row_gap
-        self.cover_layout.footer_gap=footer_gap
+    -- Account for real cover sizes and heading ink when centering the block.
+    local visible_top,visible_bottom=math.huge,-math.huge
+    local function include(top,bottom)visible_top=math.min(visible_top,top);visible_bottom=math.max(visible_bottom,bottom)end
+    local function includeHeading(r,label)
+        local _,h,it,ib=textSize(label,self.font_size,true,nil,r.w,true)
+        local offset=math.max(0,math.floor((r.h-h)/2))
+        include(r.y+offset+(it or 0),r.y+offset+(ib or h))
     end
-    c.h = math.max(1, math.ceil(button_y - c.y - footer_gap))
-    self.title_x = c.x
-    local visible = {}
-    for _, tile in ipairs(self.tiles) do
-        visible[tile.entry.file] = true
-        local asset = self.assets[tile.entry.file]
-        if asset and (asset.requested_w ~= tile.cover.w or asset.requested_h ~= tile.cover.h) then
-            if asset.image then asset.image:free() end
-            self.assets[tile.entry.file] = nil
-        end
+    if self.folder_title_rect then includeHeading(self.folder_title_rect,self.folder.title)end
+    for _,h in ipairs(self.category_headers)do
+        includeHeading(h.rect,h.folder.title)
+        if #h.folder.books==0 then include(h.body.y,h.body.y+h.body.h)end
     end
-    for file, asset in pairs(self.assets) do
-        if not visible[file] then
-            if asset.image then asset.image:free() end
-            self.assets[file] = nil
-        end
+    for _,tile in ipairs(self.tiles)do
+        include(tile.cover.y,tile.cover.y+tile.cover.h+(tile.progress and progress_space or 0))
     end
-    if self.kind=="library" or self.kind=="recents" then
-        local h=Screen:getHeight()
-        local edge=math.max(8,Screen:scaleBySize(10))
-        local screen=self.owner and self.owner._slate_screen
-        local lock=screen and screen.lock_button
-        local recents_top=lock and lock.y+math.floor(lock.h*.65) or Screen:scaleBySize(90)
-        recents_top=math.max(edge,math.min(recents_top,h-edge-1))
-        local recents_bottom=recents_top+math.min(math.floor(h*.80),h-recents_top-edge)
-        local location_top=self.owner and self.owner._slate_location_line_top
-        local target_bottom=location_top and math.min(h-edge,math.floor(location_top)-Screen:scaleBySize(4)) or recents_bottom
-        local target_y=math.max(edge,target_bottom-self.box.h)
-        local dy=target_y-self.box.y
-        self.box.y=target_y
+    if visible_top<math.huge then
+        local dy=categories and -math.floor((heading_h-font_h)/4)or stable_recents and 0 or math.floor(header_bottom+(button_y-header_bottom-(visible_bottom-visible_top))/2-visible_top+.5)
         local shifted={}
-        local function shift(rect)
-            if rect and not shifted[rect] then rect.y=rect.y+dy;shifted[rect]=true end
+        local function shift(r)if r and not shifted[r]then r.y=r.y+dy;shifted[r]=true end end
+        shift(self.folder_title_rect)
+        for _,t in ipairs(self.tiles)do shift(t.rect);shift(t.cover)end
+        for _,h in ipairs(self.category_headers)do shift(h.rect);shift(h.previous);shift(h.next);shift(h.body)end
+        first_row_gap=visible_top+dy-header_bottom
+        self.cover_layout={header_bottom=header_bottom,button_y=button_y,first_row_gap=first_row_gap,
+            footer_gap=button_y-visible_bottom-dy,gap=row_gap,rows=#groups,categories=categories}
+    else
+        self.cover_layout={header_bottom=header_bottom,button_y=button_y,first_row_gap=available/2,footer_gap=available/2,rows=0}
+    end
+    self.cover_row_gap=row_gap
+    local visible={}
+    for _,tile in ipairs(self.tiles)do
+        visible[tile.entry.file]=true
+        local asset=self.assets[tile.entry.file]
+        if asset and(asset.requested_w~=tile.cover.w or asset.requested_h~=tile.cover.h)then
+            if asset.image then asset.image:free()end
+            self.assets[tile.entry.file]=nil
         end
-        shift(c);shift(self.folder_title_rect)
-        for _,tile in ipairs(self.tiles)do shift(tile.rect);shift(tile.cover)end
-        for _,header in ipairs(self.category_headers)do
-            shift(header.rect);shift(header.previous);shift(header.next);shift(header.body)
-        end
-        self.cover_layout.header_bottom=self.cover_layout.header_bottom+dy
-        self.cover_layout.button_y=self.cover_layout.button_y+dy
+    end
+    for file,asset in pairs(self.assets)do
+        if not visible[file]then if asset.image then asset.image:free()end;self.assets[file]=nil end
     end
     self:loadVisibleCovers()
 end
@@ -1172,6 +926,21 @@ local function dateStamp(text)
     return stamp and os.date("%Y-%m-%d",stamp)==text and stamp or nil
 end
 
+local function progressHeading(mode,start,finish)
+    if mode=='months'then return _('MONTHS')..' - '..os.date('%b.%d',start):upper()..' - '..os.date('%b.%d.%y',finish):upper()end
+    local prefix=mode=='custom' and _('CUSTOM RANGE')or mode=='history' and _('ENTIRE HISTORY')or _('LAST SEVEN DAYS')
+    return prefix..' - '..os.date('%d/%m/%y',start)..' - '..os.date('%d/%m/%y',finish)
+end
+local function goalPeriod(now,period)
+    local first=os.date('*t',now);first.hour,first.min,first.sec,first.isdst=0,0,0,nil
+    if period=='month'then first.day=1 else first.day=first.day-(first.wday+5)%7 end
+    local start=os.time(first)
+    local last=os.date('*t',start)
+    if period=='month'then last.month=last.month+1 else last.day=last.day+7 end
+    last.isdst=nil
+    return start,os.time(last)-1
+end
+
 function Books:getReadingProgress(mode, from_date, to_date)
     mode = mode or "week"
     local now = os.time()
@@ -1179,8 +948,10 @@ function Books:getReadingProgress(mode, from_date, to_date)
     first.hour, first.min, first.sec, first.isdst = 0,0,0,nil
     local title, finish = _("LAST SEVEN DAYS"), now
     if mode == "months" then
-        first.month, first.day = first.month-11,1
-        title = _("MONTHS — LAST TWELVE MONTHS")
+        first.month,first.day=1,1
+        local ending={year=first.year+1,month=1,day=1,hour=0,min=0,sec=0,isdst=nil}
+        finish=os.time(ending)-1
+        title=_("MONTHS")
     elseif mode == "history" then
         title = _("ENTIRE HISTORY")
     elseif mode == "custom" then
@@ -1225,11 +996,12 @@ function Books:getReadingProgress(mode, from_date, to_date)
         for i,date in ipairs(rows and rows[1] or {}) do
             daily[date]={pages=tonumber(rows[2][i]) or 0,duration=tonumber(rows[3][i]) or 0}
         end
-        local summary={days={},pages=0,duration=0,maximum=0,longest_day=0,calendar_days=0,title=title,mode=mode}
+        local summary={days={},pages=0,duration=0,maximum=0,longest_day=0,calendar_days=0,title=progressHeading(mode,start,finish),mode=mode,start=start,finish=finish}
         local months = {}
         local stamp=start
         while stamp<=finish do
             summary.calendar_days=summary.calendar_days+1
+            if stamp<=now then summary.elapsed_days=(summary.elapsed_days or 0)+1 end
             local date=os.date("%Y-%m-%d",stamp)
             local value=daily[date] or {pages=0,duration=0}
             local item
@@ -1237,12 +1009,12 @@ function Books:getReadingProgress(mode, from_date, to_date)
                 local key=os.date("%Y-%m",stamp)
                 item=months[key]
                 if not item then
-                    item={label=os.date("%b %Y",stamp),short=os.date("%b",stamp),duration=0,pages=0}
+                    item={label=os.date("%b",stamp),short=os.date("%b",stamp),duration=0,pages=0}
                     months[key]=item;summary.days[#summary.days+1]=item
                 end
                 item.duration=item.duration+value.duration;item.pages=item.pages+value.pages
             else
-                item={label=os.date("%a %d %b",stamp),short=os.date("%d",stamp),
+                item={label=os.date("%a %d",stamp),short=os.date("%d",stamp),
                     duration=value.duration,pages=value.pages,today=date==os.date("%Y-%m-%d",now)}
                 summary.days[#summary.days+1]=item
             end
@@ -1252,7 +1024,21 @@ function Books:getReadingProgress(mode, from_date, to_date)
             stamp=os.time(next_day)
         end
         for index,item in ipairs(summary.days) do summary.maximum=math.max(summary.maximum,item.duration) end
-        summary.average_day=summary.duration/math.max(1,summary.calendar_days)
+        summary.average_day=summary.duration/math.max(1,summary.elapsed_days or summary.calendar_days)
+        if G_reader_settings:readSetting(PREFIX..'goal.enabled',false)==true then
+            local period=G_reader_settings:readSetting(PREFIX..'goal.period','week')
+            local goal_start,goal_finish=goalPeriod(now,period)
+            local values=connection:exec(string.format([[
+                SELECT count(*), coalesce(sum(read_duration),0) FROM (
+                    SELECT id_book,page,strftime('%%Y-%%m-%%d',start_time,'unixepoch','localtime') AS reading_day,
+                           sum(duration) AS read_duration
+                    FROM page_stat WHERE start_time >= %d AND start_time <= %d
+                    GROUP BY id_book,page,reading_day
+                );
+            ]],goal_start,now))
+            summary.goal={start=goal_start,finish=goal_finish,pages=tonumber(values and values[1]and values[1][1])or 0,
+                duration=tonumber(values and values[2]and values[2][1])or 0}
+        end
         return summary
     end)
     if connection then pcall(connection.close,connection) end
@@ -1268,7 +1054,7 @@ local progress_cache = {}
 local function progressCachePath(mode, first, last)
     local directory=DataStorage:getDataDir().."/cache/slate-reading-progress"
     util.makePath(directory)
-    local key=table.concat({"v1",mode or "week",first or "",last or ""},"|")
+    local key=table.concat({"v3",mode or "week",first or "",last or "",tostring(G_reader_settings:readSetting(PREFIX.."goal.enabled",false)),G_reader_settings:readSetting(PREFIX.."goal.period","week")},"|")
     return directory.."/"..cacheHash(key)..".json",key
 end
 
@@ -1381,7 +1167,109 @@ function Popup:setProgressRange(mode, first, last)
     self:rebuild();UIManager:setDirty(self,"ui")
 end
 
+function Popup:trackProgressDialog(dialog)
+    require("slate_popup_navigation"):wrapDialog(dialog,self.owner)
+    self._ui_menu=dialog
+    local original=dialog.onCloseWidget
+    dialog.onCloseWidget=function(instance,...)
+        if self._ui_menu==instance then self._ui_menu=nil end
+        if original then return original(instance,...)end
+    end
+    return dialog
+end
+function Popup:showProgressMenu(title,buttons)
+    if self._ui_menu then UIManager:close(self._ui_menu);self._ui_menu=nil end
+    local menu=require('ui/widget/buttondialog'):new{modal=true,title=title,buttons=buttons,width=math.floor(Screen:getWidth()*.8)}
+    self:trackProgressDialog(menu)
+    UIManager:show(SlateUtils:themePopup(menu))
+end
+function Popup:showProgressSettings()
+    self:showProgressMenu(_('READING PROGRESS'),{
+        {{text=_('Reading Range'),callback=function()self:showProgressRange()end}},
+        {{text=_('Reading Streak / Goals'),callback=function()self:showGoalSettings()end}},
+    })
+end
+function Popup:saveGoalSetting(key,value)
+    G_reader_settings:saveSetting(PREFIX..'goal.'..key,value);G_reader_settings:flush()
+    self.progress_checked=false
+    self:loadReadingProgress();UIManager:setDirty(self,'ui')
+end
+function Popup:showGoalSettings()
+    local enabled=G_reader_settings:readSetting(PREFIX..'goal.enabled',false)==true
+    self:showProgressMenu(_('READING STREAK / GOALS'),{
+        {{text=(enabled and '✓ 'or '').._('Enable Reading Goal'),callback=function()
+            self:saveGoalSetting('enabled',not enabled);self:showGoalSettings()
+        end}},
+        {{text=_('Set Streak Goals'),callback=function()self:showGoalEditor()end}},
+    })
+end
+function Popup:showGoalEditor()
+    local metric=G_reader_settings:readSetting(PREFIX..'goal.metric','time')
+    local period=G_reader_settings:readSetting(PREFIX..'goal.period','week')
+    local key=metric=='pages' and 'pages'or 'minutes'
+    local value=tonumber(G_reader_settings:readSetting(PREFIX..'goal.'..key,metric=='pages' and 100 or 120))or 1
+    self:showProgressMenu(_('SET STREAK GOALS'),{
+        {{text=_('Goal Type')..': '..(metric=='pages' and _('Pages')or _('Reading Time')),callback=function()
+            self:showProgressMenu(_('GOAL TYPE'),{
+                {{text=_('Reading Time'),callback=function()self:saveGoalSetting('metric','time');self:showGoalEditor()end}},
+                {{text=_('Pages'),callback=function()self:saveGoalSetting('metric','pages');self:showGoalEditor()end}},
+            })
+        end}},
+        {{text=_('Target')..': '..value..' '..(metric=='pages' and _('pages')or _('minutes')),callback=function()
+            if self._ui_menu then UIManager:close(self._ui_menu);self._ui_menu=nil end
+            local dialog=require('ui/widget/spinwidget'):new{modal=true,title_text=_('Reading Goal Target'),
+                value=value,value_min=1,value_max=100000,value_step=1,value_hold_step=10,
+                unit=metric=='pages' and _('pages')or _('minutes'),ok_text=_('Apply'),callback=function(spin)
+                    self:saveGoalSetting(key,spin.value);UIManager:nextTick(function()if not self.closed then self:showGoalEditor()end end)
+                end}
+            self:trackProgressDialog(dialog);UIManager:show(SlateUtils:themePopup(dialog))
+        end}},
+        {{text=_('Period')..': '..(period=='month' and _('Per Month')or _('Per Week')),callback=function()
+            self:showProgressMenu(_('GOAL PERIOD'),{
+                {{text=_('Per Week'),callback=function()self:saveGoalSetting('period','week');self:showGoalEditor()end}},
+                {{text=_('Per Month'),callback=function()self:saveGoalSetting('period','month');self:showGoalEditor()end}},
+            })
+        end}},
+    })
+end
+function Popup:paintReadingGoal(bb,y)
+    local bottom=self.box and (self.box.y+self.box.h-self.bottom_pad-self.button_h)or self.content.y+self.content.h
+    local block_h=math.max(20,Screen:scaleBySize(20))*2+self.gap
+    y=y+math.max(0,math.floor((bottom-y-block_h)/2))
+    if G_reader_settings:readSetting(PREFIX..'goal.enabled',false)~=true then return end
+    local c=self.content
+    local goal=self.progress_data and self.progress_data.goal
+    local heading_h=math.max(20,Screen:scaleBySize(20))
+    drawFittedText(bb,_('READING GOAL'),{x=c.x,y=y,w=c.w*.35,h=heading_h},18,true,false)
+    if not goal then
+        drawFittedText(bb,_('Refreshing current goal period…'),{x=c.x,y=y+heading_h+self.gap,w=c.w,h=heading_h},14,false,false)
+        return
+    end
+    local metric=G_reader_settings:readSetting(PREFIX..'goal.metric','time')
+    local value=metric=='pages' and goal.pages or goal.duration
+    local target=metric=='pages' and tonumber(G_reader_settings:readSetting(PREFIX..'goal.pages',100))or (tonumber(G_reader_settings:readSetting(PREFIX..'goal.minutes',120))or 120)*60
+    target=math.max(1,target or 1);value=math.max(0,value or 0)
+    local ratio=value/target
+    local row_y=y+heading_h+self.gap
+    local percentage=string.format('%i%%',math.floor(ratio*100+.5))
+    local percent_w=math.min(c.w*.25,math.ceil(textSize(percentage,16,true)))
+    local bar_w=math.max(1,c.w-percent_w-self.gap*2)
+    local bar_h=math.max(5,Screen:scaleBySize(6))
+    bb:paintRoundedRect(c.x,row_y+math.floor((heading_h-bar_h)/2),bar_w,bar_h,Blitbuffer.COLOR_LIGHT_GRAY,math.floor(bar_h/2))
+    local filled=math.floor(bar_w*math.min(1,ratio))
+    if filled>0 then
+        bb:paintRoundedRect(c.x,row_y+math.floor((heading_h-bar_h)/2),filled,bar_h,Blitbuffer.COLOR_BLACK,math.min(math.floor(bar_h/2),math.floor(filled/2)))
+    end
+    local values=metric=='pages' and string.format('%i / %i %s',value,target,_('pages'))or durationLabel(value)..' / '..durationLabel(target)
+    local period=G_reader_settings:readSetting(PREFIX..'goal.period','week')
+    local label=values..' / '..(period=='month' and _('per month')or _('per week'))
+    drawFittedText(bb,label,{x=c.x+c.w*.35+self.gap,y=y,w=c.w*.65-self.gap,h=heading_h},16,true,'right')
+    drawFittedText(bb,percentage,{x=c.x+bar_w+self.gap*2,y=row_y,w=percent_w,h=heading_h},16,true,'right')
+    self.reading_goal_bounds={x=c.x,y=y,w=c.w,h=heading_h*2+self.gap}
+end
+
 function Popup:showProgressRange()
+    if self._ui_menu then UIManager:close(self._ui_menu);self._ui_menu=nil end
     local ButtonDialog=require("ui/widget/buttondialog")
     local InputDialog=require("ui/widget/inputdialog")
     local popup=self
@@ -1412,7 +1300,7 @@ function Popup:showProgressRange()
         end)
     end
     local items={}
-    for index,option in ipairs({{"week",_("Last seven days")},{"months",_("Months — last twelve months")},{"custom",_("Custom date range…")},{"history",_("Entire history")}}) do
+    for index,option in ipairs({{"week",_("Last seven days")},{"months",_("Months — current year")},{"custom",_("Custom date range…")},{"history",_("Entire history")}}) do
         local mode=option[1]
         items[#items+1]={text=option[2],checked_func=function() return popup.progress_mode==mode end,
             callback=function() choose(mode) end}
@@ -1423,6 +1311,7 @@ function Popup:showProgressRange()
     end
     menu=ButtonDialog:new{modal=true,title=_("READING RANGE"),buttons=buttons,
         width=math.floor(Screen:getWidth()*0.8)}
+    self:trackProgressDialog(menu)
     UIManager:show(SlateUtils:themePopup(menu))
 end
 
@@ -1441,7 +1330,8 @@ function Popup:paintReadingProgress(bb)
     if not data then drawText(bb,self.progress_error or _("Preparing reading progress…"),c,18,false,true);return end
     local gap=self.gap
     local title_h=math.floor(c.h*.065)
-    drawText(bb,data.title,{x=c.x,y=c.y,w=c.w,h=title_h},21,true,false)
+    local heading=data.start and progressHeading(data.mode,data.start,data.finish)or data.title
+    drawFittedText(bb,heading,{x=c.x,y=c.y,w=c.w,h=title_h},21,true,false)
     local graph_h=math.floor(c.h*.29)
     local label_h=math.max(20,Screen:scaleBySize(17))
     local axis_w=math.floor(c.w*.14)
@@ -1487,46 +1377,68 @@ function Popup:paintReadingProgress(bb)
             {x=c.x,y=c.y+title_h+graph_h,w=c.w,h=label_h},11,false,true)
     end
     local table_y=c.y+title_h+graph_h+label_h+gap
-    local summary_h=math.floor(c.h*.16)
-    local table_h=c.y+c.h-summary_h-gap*2-table_y
-    local row_h=math.floor(table_h/8)
-    local widths={math.floor(c.w*.38),math.floor(c.w*.40)}
-    local xs={c.x,c.x+widths[1],c.x+widths[1]+widths[2]}
-    local ws={widths[1],widths[2],c.w-widths[1]-widths[2]}
-    for row=0,7 do
-        local labels,bold
-        if row==0 then
-            labels={data.mode=="months" and _("MONTH") or _("DAY"),_("READING TIME"),_("PAGES")};bold=true
-        else
-            local item=data.days[(self.page-1)*7+row]
-            if item then labels={item.label,durationLabel(item.duration),tostring(item.pages)};bold=item.today end
+    local measured_width,summary_text_h=textSize('Ag',14,true)
+    local goal_reserve=G_reader_settings:readSetting(PREFIX..'goal.enabled',false)==true
+        and math.max(20,Screen:scaleBySize(20))*2+gap*3 or 0
+    local row_h=math.max(12,math.min(math.max(28,Screen:scaleBySize(28)),
+        math.floor((c.y+c.h-table_y-summary_text_h-gap*4-goal_reserve)/3)))
+    local table_h=row_h*3
+    local label_w=math.floor(c.w*.18)
+    local columns=self.progress_rows or 7
+    local value_w=(c.w-label_w)/columns
+    local row_labels={data.mode=='months' and _('MONTH')or _('DAY'),_('READING TIME'),_('PAGES')}
+    local row_label_size=14
+    for size=14,1,-1 do
+        row_label_size=size
+        local fits=true
+        for _,label in ipairs(row_labels)do
+            local width,height=textSize(label,size,true)
+            if width>label_w-gap*2 or height>row_h then fits=false;break end
         end
-        for col=1,3 do
-            local rect={x=xs[col],y=table_y+row*row_h,w=ws[col],h=row_h}
-            if row==0 then bb:paintRect(rect.x,rect.y,rect.w,rect.h,Blitbuffer.COLOR_LIGHT_GRAY) end
-            bb:paintBorder(rect.x,rect.y,rect.w,rect.h,1,Blitbuffer.COLOR_LIGHT_GRAY)
-            if labels then drawText(bb,labels[col],{x=rect.x+gap,y=rect.y,w=rect.w-gap*2,h=rect.h},17,bold,col~=1) end
+        if fits then break end
+    end
+    for row=1,3 do
+        local rect={x=c.x,y=table_y+(row-1)*row_h,w=label_w,h=row_h}
+        bb:paintRect(rect.x,rect.y,rect.w,rect.h,Blitbuffer.COLOR_LIGHT_GRAY)
+        bb:paintBorder(rect.x,rect.y,rect.w,rect.h,1,Blitbuffer.COLOR_LIGHT_GRAY)
+        drawFittedText(bb,row_labels[row],{x=rect.x+gap,y=rect.y,w=rect.w-gap*2,h=row_h},row_label_size,true,false)
+        for column=1,columns do
+            local item=data.days[(self.page-1)*columns+column]
+            local period_label=item and item.label or ''
+            if data.mode=='months' then period_label=period_label:gsub('%s+%d%d%d%d$','')
+            else period_label=period_label:gsub('%s+%a+$','')end
+            local text=item and(row==1 and period_label or row==2 and durationLabel(item.duration)or tostring(item.pages))or ''
+            local x=math.floor(c.x+label_w+(column-1)*value_w)
+            local right=math.floor(c.x+label_w+column*value_w)
+            bb:paintBorder(x,rect.y,right-x,row_h,1,Blitbuffer.COLOR_LIGHT_GRAY)
+            drawFittedText(bb,text,{x=x+gap,y=rect.y,w=math.max(1,right-x-gap*2),h=row_h},14,row==1 or(item and item.today),true)
         end
     end
-    local y=c.y+c.h-summary_h
+    local y=table_y+table_h+gap*2
     local w=math.floor((c.w-gap*3)/4)
     local summaries={
-        {_("TOTAL READ"),durationLabel(data.duration),_("TIME")},
-        {_("TOTAL PAGES"),tostring(data.pages),_("READ")},
-        {_("AVERAGE TIME"),durationLabel(data.average_day or 0),_("PER DAY")},
-        {_("LONGEST READING"),durationLabel(data.longest_day or data.maximum),_("IN A DAY")},
+        _('Total read')..' '..durationLabel(data.duration),
+        _('Total pages')..' '..tostring(data.pages),
+        _('Average/day')..' '..durationLabel(data.average_day or 0),
+        _('Longest day')..' '..durationLabel(data.longest_day or data.maximum),
     }
-    local radius=math.max(0,math.min(60,tonumber(G_reader_settings:readSetting("slate.button_corner_radius",40)) or 40))
-    for index,item in ipairs(summaries) do
+    local shared_size=14
+    for size=14,6,-1 do
+        shared_size=size
+        local fits=true
+        for _,label in ipairs(summaries)do local width=textSize(label,size,true);if width>w-gap*2 then fits=false;break end end
+        if fits then break end
+    end
+    local _,text_h=textSize('Ag',shared_size,true)
+    local summary_h=text_h+gap*2
+    local radius=math.max(0,math.min(math.floor(summary_h/2),tonumber(G_reader_settings:readSetting('slate.button_corner_radius',40))or 40))
+    for index,label in ipairs(summaries)do
         local x=c.x+(index-1)*(w+gap)
         bb:paintBorder(x,y,w,summary_h,1,Blitbuffer.COLOR_BLACK,radius)
-        local heading_h=math.floor(summary_h*.42)
-        if item[3] then
-            drawText(bb,item[1],{x=x+gap,y=y+gap,w=w-gap*2,h=heading_h/2},12,true,true)
-            drawText(bb,item[3],{x=x+gap,y=y+gap+heading_h/2,w=w-gap*2,h=heading_h/2},12,true,true)
-        else drawText(bb,item[1],{x=x+gap,y=y+gap,w=w-gap*2,h=heading_h},12,true,true) end
-        drawText(bb,item[2],{x=x+gap,y=y+gap+heading_h,w=w-gap*2,h=summary_h-heading_h-gap*2},23,true,true)
+        drawFittedText(bb,label,{x=x+gap,y=y+gap,w=w-gap*2,h=text_h},shared_size,true,true)
     end
+    self.progress_summary_bounds={x=c.x,y=y,w=c.w,h=summary_h}
+    self:paintReadingGoal(bb,y+summary_h)
 end
 
 function Popup:showUIOptions()
@@ -1537,6 +1449,7 @@ function Popup:showUIOptions()
     local popup = self
     local menu
     local function trackDialog(dialog)
+        require("slate_popup_navigation"):wrapDialog(dialog,popup.owner)
         local close = dialog.onCloseWidget
         dialog.onCloseWidget = function(instance, ...)
             if popup._ui_menu == instance then popup._ui_menu = nil end
@@ -1599,23 +1512,20 @@ function Popup:paintTo(bb)
     bb:paintRoundedRect(r.x, r.y, r.w, r.h, Blitbuffer.COLOR_WHITE, radius)
     bb:paintBorder(r.x, r.y, r.w, r.h, 2, Blitbuffer.COLOR_BLACK, radius)
     self.back_button = nil
-    local header_pager = self.view ~= "progress"
-    local header_pager_w = math.min(math.floor(c.w * 0.38), Screen:scaleBySize(220))
-    local counter_width = textSize(_("Pages") .. " " .. self.pages .. " / " .. self.pages,
-        14, false, "infofont")
-    local counter_gap = math.max(2, Screen:scaleBySize(2))
-    header_pager_w = math.min(header_pager_w,
-        math.ceil(math.max((counter_width + counter_gap * 2) / 0.68,
-            counter_width + counter_gap * 2 + 24)))
+    local header_pager = true
+    local pager_label=_("Pages").." "..self.page.."/"..self.pages
+    local pager_label_w=textSize(_("Pages").." "..self.pages.."/"..self.pages,14,false)
+    local arrow_w=textSize("›",28,true)
+    local header_pager_w=math.ceil(pager_label_w+arrow_w*2+self.gap*8)
     local action_size = math.max(24, Screen:scaleBySize(32))
     local icon_inset = self.title_x - r.x
     local action_right = r.x + r.w - math.max(self.pad, icon_inset)
-    self.ui_menu_button = self.view ~= "progress" and {
+    self.ui_menu_button = {
         x = action_right - action_size,
         y = r.y + self.pad + math.floor((self.title_h - action_size) / 2),
         w = action_size, h = action_size,
-    } or nil
-    local header_right = self.ui_menu_button and self.ui_menu_button.x - self.gap or c.x + c.w
+    }
+    local header_right = self.ui_menu_button and self.ui_menu_button.x - self.gap or action_right-action_size-self.gap
     if header_pager and self.pages > 1 then
         header_right = header_right - header_pager_w - self.gap
     elseif self.view == "progress" then
@@ -1679,16 +1589,6 @@ function Popup:paintTo(bb)
         drawText(bb, self.folder.title, self.folder_title_rect, self.font_size, true, false)
     end
     self.progress_switch = nil
-    if self.view == "progress" then
-        local size = math.max(24, Screen:scaleBySize(32))
-        self.progress_switch = {x=c.x+c.w-size,y=r.y+self.pad+math.floor((self.title_h-size)/2),w=size,h=size}
-        local rect=self.progress_switch
-        local icon=ImageWidget:new{file=(self.owner:getPluginDir()).."/icons/switch.svg",width=size,height=size,
-            alpha=true,original_in_nightmode=false}
-        local ok=pcall(icon.paintTo,icon,bb,rect.x,rect.y)
-        icon:free()
-        if not ok then drawText(bb,"⇄",rect,28,true,true) end
-    end
     for index, header in ipairs(self.category_headers) do
         drawText(bb, header.folder.title, header.rect, self.font_size, true, false)
         if header.pages > 1 then
@@ -1713,19 +1613,20 @@ function Popup:paintTo(bb)
         or (c.y + c.h + self.pager_gap)
     local pager_w = header_pager and header_pager_w
         or math.min(c.w, Screen:scaleBySize(280))
-    local pager_x = header_pager and ((self.ui_menu_button and self.ui_menu_button.x - self.gap or c.x + c.w) - pager_w)
+    local pager_x = header_pager and ((self.ui_menu_button and self.ui_menu_button.x - self.gap or action_right-action_size-self.gap) - pager_w)
         or (c.x + math.floor((c.w - pager_w) / 2))
-    local arrow_w = math.max(12, math.floor(pager_w * 0.16))
-    self.previous, self.next = nil, nil
+    self.previous, self.next, self.pager_rect = nil, nil, nil
     if self.pages > 1 then
-        self.previous = {x=pager_x,y=pager_y,w=arrow_w,h=pager_h}
-        self.next = {x=pager_x+pager_w-arrow_w,y=pager_y,w=arrow_w,h=pager_h}
-        drawText(bb, "‹", self.previous, 48, true, true, nil, "infofont")
-        drawText(bb, _("Pages") .. " " .. self.page .. " / " .. self.pages,
-            {x=pager_x+arrow_w+counter_gap,y=pager_y,
-                w=math.max(1,pager_w-arrow_w*2-counter_gap*2),h=pager_h},
-            14, false, true, nil, "infofont")
-        drawText(bb, "›", self.next, 48, true, true, nil, "infofont")
+        self.pager_rect={x=pager_x,y=pager_y,w=pager_w,h=pager_h}
+        self.previous={x=pager_x,y=pager_y,w=pager_w/2,h=pager_h}
+        self.next={x=pager_x+pager_w/2,y=pager_y,w=pager_w/2,h=pager_h}
+        -- Native drawing participates in the popup's night-mode inversion.
+        -- No rasterized SVG background can obscure the counter or outline.
+        bb:paintBorder(pager_x,pager_y,pager_w,pager_h,1,Blitbuffer.COLOR_BLACK,math.floor(pager_h/2))
+        drawFittedText(bb,"‹",{x=pager_x+self.gap*2,y=pager_y,w=arrow_w,h=pager_h},28,true,true)
+        drawFittedText(bb,"›",{x=pager_x+pager_w-self.gap*2-arrow_w,y=pager_y,w=arrow_w,h=pager_h},28,true,true)
+        drawFittedText(bb,pager_label,
+            {x=pager_x+arrow_w+self.gap*4,y=pager_y,w=math.max(1,pager_w-arrow_w*2-self.gap*8),h=pager_h},14,false,true)
     end
     self.mode_buttons = {}
     do
@@ -1877,8 +1778,15 @@ end
 
 function Popup:onTap(_, ges)
     local pos = ges and ges.pos
-    if not contains(self.box, pos) then return self:onClose() end
-    if contains(self:touchRect(self.ui_menu_button), pos) then self:showUIOptions();return true end
+    if not contains(self.box,pos)then
+        if require('slate_popup_navigation'):switch(self,self.owner,ges)then return true end
+        return self:onClose()
+    end
+    if contains(self.pager_rect,pos) then
+        self:changePage(pos.x<self.pager_rect.x+self.pager_rect.w/2 and -1 or 1)
+        return true
+    end
+    if contains(self:touchRect(self.ui_menu_button), pos) then if self.view=="progress"then self:showProgressSettings()else self:showUIOptions()end;return true end
     if contains(self:touchRect(self.progress_switch), pos) then self:showProgressRange();return true end
     if contains(self:touchRect(self.back_button), pos) then return self:onBack() end
     for i, rect in ipairs(self.mode_buttons or {}) do
@@ -1956,7 +1864,10 @@ end
 
 function Popup:onHold(_, ges)
     local pos = ges and ges.pos
-    if not contains(self.box, pos) then return true end
+    if not contains(self.box, pos) then
+        require('slate_popup_navigation'):switch(self,self.owner,ges,'hold')
+        return true
+    end
     local loaded, pinpad = pcall(require, "slate_pinpad")
     if loaded and pinpad:intercept(self.owner) then return true end
     for _, tile in ipairs(self.tiles or {}) do

@@ -144,6 +144,8 @@ function ForecastPopup:init()
         + self.row_h * 4 + self.icons_h + self.moon_h
     self.box.y = math.floor((h - self.box.h) / 2)
     self.ges_events = {
+        Hold = {GestureRange:new{ges="hold",range=Geom:new{x=0,y=0,w=w,h=h}}},
+        HoldRelease = {GestureRange:new{ges="hold_release",range=Geom:new{x=0,y=0,w=w,h=h}}},
         Tap = {
             GestureRange:new{
                 ges = "tap",
@@ -552,8 +554,19 @@ function ForecastPopup:showSettings()
     track(menu)
 end
 
+function ForecastPopup:onHold(_,ges)
+    if not contains(self.box,ges and ges.pos)then
+        require('slate_popup_navigation'):switch(self,self.owner,ges,'hold')
+    end
+    return true
+end
+function ForecastPopup:onHoldRelease()return true end
+
 function ForecastPopup:onTap(_, ges)
-    if not contains(self.box, ges and ges.pos) then return self:onClose() end
+    if not contains(self.box,ges and ges.pos)then
+        if require('slate_popup_navigation'):switch(self,self.owner,ges)then return true end
+        return self:onClose()
+    end
     if contains(self.menu_button, ges and ges.pos) then self:showSettings() end
     return true
 end
@@ -970,7 +983,7 @@ function SlateScreenSaver:onHold(arg, ges)
     if SlatePinPad:intercept(self.owner) then return true end
     local pos = ges and ges.pos
     if not pos then return true end
-    if G_reader_settings:readSetting("slate.pin.long_press_settings",false)==true
+    if G_reader_settings:readSetting("slate.pin.long_press_settings",true)==true
         and contains(self:touchRect(self.lock_button),pos) then
         SlateSettings:showEditor(self.owner)
         return true
