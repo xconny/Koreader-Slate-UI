@@ -768,13 +768,9 @@ function SlateScreenSaver:paintTo(bb, x, y)
     local stroke = math.max(1, math.floor(size / 16))
     local invert = area and area.emulate
 
-    local apps_selected = G_reader_settings:readSetting(
-        "slate.quicklaunch_page", "games"
-    ) == "apps"
     paintActionButton(
         self.owner, bb, self.quicklaunch_button,
-        apps_selected and "apps" or "quicklaunch",
-        apps_selected and "apps.svg" or "gamepad.svg",
+        "apps", "apps.svg",
         nil, stroke, foreground, background, invert
     )
     paintActionButton(
@@ -1050,6 +1046,7 @@ function SlateScreenSaver:onSuspend()
 end
 
 function SlateScreenSaver:onCloseWidget()
+    self.owner:cancelWakeRepaint()
     SlatePinPad:close(self.owner)
     self.owner:cancelWeatherRefresh()
     self.owner:closeWeatherPopups()
@@ -1157,6 +1154,7 @@ function Slate:patchScreensaver()
         end
 
         local prefix = instance.prefix
+        require("slate_reading"):advanceCustomBackground()
         plugin_instance:cancelWeatherRefresh()
         plugin_instance:closeWeatherPopups()
         SlatePinPad:suspend(plugin_instance)
@@ -1675,6 +1673,42 @@ function Slate:scheduleWeatherRefresh(delay)
     UIManager:scheduleIn(delay or 0.2, self._slate_refresh)
 end
 
+function Slate:cancelWakeRepaint()
+    if self._slate_wake_repaint then UIManager:unschedule(self._slate_wake_repaint);self._slate_wake_repaint=nil end
+    if self._slate_wake_banner then UIManager:unschedule(self._slate_wake_banner);self._slate_wake_banner=nil end
+end
+
+function Slate:scheduleWakeRepaint()
+    self:cancelWakeRepaint()
+    local screen=self._slate_screen
+    if not screen then return end
+    local function active()
+        return self._slate_screen==screen and screen.awake and not self._slate_suspended
+    end
+    local repaint
+    repaint=function()
+        if self._slate_wake_repaint~=repaint then return end
+        self._slate_wake_repaint=nil
+        if active()then UIManager:setDirty("all","full")end
+    end
+    self._slate_wake_repaint=repaint
+    UIManager:nextTick(repaint)
+    -- Kindle may paint its hibernation banner after the first wake redraw.
+    -- Repaint through the stack so an open PIN/settings dialog stays visible.
+    local banner
+    banner=function()
+        if self._slate_wake_banner~=banner then return end
+        self._slate_wake_banner=nil
+        if not active()then return end
+        local height=Screen:getHeight()
+        local strip=math.ceil(height*.12)
+        local region=require("ui/geometry"):new{x=0,y=height-strip,w=Screen:getWidth(),h=strip}
+        UIManager:setDirty("all","ui",region)
+    end
+    self._slate_wake_banner=banner
+    UIManager:scheduleIn(1.6,banner)
+end
+
 function Slate:onResume()
     self._slate_suspended = false
     SlateQuotes:startAutomaticUpdates(self)
@@ -1688,6 +1722,7 @@ function Slate:onResume()
             SlatePinPad:arm(self)
         end
 
+        self:scheduleWakeRepaint()
         self:scheduleWeatherRefresh()
     end
 end
@@ -1701,6 +1736,7 @@ function Slate:onNetworkConnected()
 end
 
 function Slate:onSuspend()
+    self:cancelWakeRepaint()
     self._slate_suspended = true
     descriptionEvent(self, "onSuspend")
     SlateQuotes:stopAutomaticUpdates(self)

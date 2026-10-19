@@ -296,7 +296,7 @@ local function paginationSignature(entries,width,height)
             a=(a*33+byte)%4294967296;b=(b*65599+byte)%4294967296
         end
     end
-    return table.concat({width,height,#entries,total,a,b},'|')
+    return table.concat({width,height,#entries,total,a,b,tostring(G_reader_settings:readSetting('slate.quotes.include_notes',false)==true)},'|')
 end
 
 function Popup:paginationReady()
@@ -396,7 +396,7 @@ function Popup:init()
         local entry=self.entries[index]
         if entry then
             local body=entry.item.text
-            if entry.item.note and entry.item.note~='' then
+            if G_reader_settings:readSetting('slate.quotes.include_notes',false)==true and entry.item.note and entry.item.note~='' then
                 body=body..'\n\n'.._('Note:')..' '..tostring(entry.item.note)
             end
             local ok,chunks=pcall(split,body,self.face,inner,self.body.h)

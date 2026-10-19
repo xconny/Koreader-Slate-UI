@@ -750,6 +750,7 @@ function Settings:buildWidget(owner)
             text = _("Custom Background Mode"),
             sub_item_table = {
                 backgroundPicker(),
+                toggle("custom_bg_rotate", _("Rotate images in custom background directory"), false),
                 choice("custom_img_mode", _("Image scaling"), scaling_options, "stretch_fit"),
             },
         }
@@ -782,7 +783,7 @@ function Settings:buildWidget(owner)
             },
         },
         {
-            text = _("Random Quote"),
+            text = _("Quote Settings"),
             sub_item_table_func = function()
                 return Quotes:buildMenu()
             end,
@@ -955,9 +956,29 @@ function Settings:showEditor(owner,custom_items)
     end
     local items=custom_items or self:build(owner)
     items.icon="appbar.settings"
+    local editor_width=math.min(math.floor(Screen:getWidth()*.96),Screen:scaleBySize(900))
+    local editor_top,editor_height,editor_offset
+    if not custom_items then
+        editor_top=math.floor((Screen:getWidth()-editor_width)/2)
+        local dock=owner._slate_card_bounds
+        local dock_top=dock and dock.y or math.floor(Screen:getHeight()*.82)
+        local dock_gap=math.max(10,math.floor(editor_width*.045))
+        local bottom=math.min(Screen:getHeight()-editor_top,dock_top-dock_gap)
+        editor_height=math.max(1,bottom-editor_top)
+        editor_offset=editor_top-math.floor((Screen:getHeight()-editor_height)/2)
+    end
     local menu=TouchMenu:new{tab_item_table={items},last_index=1,show_parent=host,
-        width=math.min(math.floor(Screen:getWidth()*.96),Screen:scaleBySize(900)),
-        height=math.floor(Screen:getHeight()*(custom_items and .80 or .65)),close_callback=close}
+        width=editor_width,max_per_page_default=math.max(10,#items),
+        height=editor_height or math.floor(Screen:getHeight()*.80),close_callback=close}
+    if editor_height and menu.bar and menu.footer and menu.footer_top_margin then
+        local chrome=menu.bar:getSize().h+menu.footer:getSize().h+menu.footer_top_margin:getSize().h
+            +(menu.padding or 0)+(menu.bordersize or 0)*2
+        local split=menu.split_height or 0
+        local fit=math.floor((editor_height-chrome)/math.max(1,#items))-split
+        menu.item_height=math.min(menu.item_height,math.max(Screen:scaleBySize(36),fit))
+        menu.max_per_page=math.max(1,math.floor((editor_height-chrome)/(menu.item_height+split)))
+        menu:updateItems(1)
+    end
     local function center(instance)
         for _,row in ipairs(instance.item_group or {})do
             if row.item and row.item._slate_apply and row.item_frame then
@@ -966,7 +987,34 @@ function Settings:showEditor(owner,custom_items)
             end
         end
         instance.menu_frame.radius=tonumber(G_reader_settings:readSetting("slate.popup_corner_radius",40)) or 40
-        instance[1]=CenterContainer:new{dimen=Screen:getSize(),instance.menu_frame}
+        if editor_height then
+            local frame=instance.menu_frame
+            if not frame._slate_original_getSize then
+                frame._slate_original_getSize=frame.getSize
+                frame.getSize=function(widget)
+                    local dim=widget:_slate_original_getSize()
+                    dim.w=editor_width;dim.h=editor_height
+                    return dim
+                end
+            end
+            frame.width=editor_width;frame.height=editor_height
+            if frame.dimen then
+                frame.dimen.x=editor_top;frame.dimen.y=editor_top
+                frame.dimen.w=editor_width;frame.dimen.h=editor_height
+            end
+            if instance.dimen then
+                instance.dimen.x=editor_top;instance.dimen.y=editor_top
+                instance.dimen.w=editor_width;instance.dimen.h=editor_height
+            end
+        end
+        local positioned=CenterContainer:new{dimen=Screen:getSize(),instance.menu_frame}
+        if editor_offset and type(positioned.paintTo)=="function"then
+            local paint=positioned.paintTo
+            positioned.paintTo=function(container,bb,x,y)
+                return paint(container,bb,x,(y or 0)+editor_offset)
+            end
+        end
+        instance[1]=positioned
     end
     center(menu)
     local update=menu.updateItems

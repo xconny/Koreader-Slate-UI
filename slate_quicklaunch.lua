@@ -21,6 +21,7 @@ local logger = require("logger")
 local _ = require("gettext")
 
 local QuickLaunch = {}
+local SECTIONS = {"games", "apps", "system"}
 local SELECTION_KEY = "slate.quicklaunch_plugins"
 local module_source = debug.getinfo(1, "S").source
 local module_dir = module_source:sub(1, 1) == "@"
@@ -87,7 +88,7 @@ end
 
 function QuickLaunch:getIconPath(section)
     section = section or G_reader_settings:readSetting("slate.quicklaunch_page", "games")
-    if section == "apps" then return module_dir .. "icons/apps.svg" end
+    if section == "apps" or section == "system" then return module_dir .. "icons/apps.svg" end
     local custom = G_reader_settings:readSetting("slate.widget_icons.quicklaunch")
     if type(custom) == "string" and custom ~= "" then return custom end
     return module_dir .. "icons/gamepad.svg"
@@ -103,6 +104,7 @@ function QuickLaunch:paintButton(bb, rect, stroke, foreground, background, inver
     end
     local size = math.max(1, math.floor(rect.w * (glyph_scale or 0.58)))
     local icon
+    if not icon_name and section == "system" then icon_name = "appbar.settings" end
     if icon_name then
         icon = IconWidget:new{
             icon = icon_name,
@@ -129,91 +131,185 @@ function QuickLaunch:paintButton(bb, rect, stroke, foreground, background, inver
 end
 
 function QuickLaunch:getAvailableEntries(owner)
-    local registered = {}
-    local candidates, seen_plugins = {}, {}
-
+    local registered,candidates,seen_plugins,uis,seen_ui={},{},{},{},{}
+    local ok,loader=pcall(require,"pluginloader")
+    if not ok then loader={}end
+    local function normalized(value)return type(value)=="string"and value:lower():gsub("[^%w]","")or ""end
+    local by_path,by_name={},{}
+    for _,definition in pairs(loader.enabled_plugins or {})do
+        if type(definition)=="table"then
+            if definition.path then by_path[definition.path]=definition end
+            by_name[normalized(definition.name)]=definition
+        end
+    end
+    local function canonicalName(plugin)
+        local definition=by_path[plugin.path]or by_name[normalized(plugin.name)]
+        return definition and definition.name or plugin.name
+    end
     local function add(plugin)
-        if type(plugin) == "table" and not seen_plugins[plugin] then
-            seen_plugins[plugin] = true
-            candidates[#candidates + 1] = plugin
+        if type(plugin)=="table"and not seen_plugins[plugin]and plugin.disabled~=true then
+            seen_plugins[plugin]=true;candidates[#candidates+1]=plugin
         end
     end
-
-    local ok, loader = pcall(require, "pluginloader")
-    if ok then
-        for _, plugin in pairs(loader.loaded_plugins or {}) do
-            add(plugin)
-        end
-    end
-
     local function addUI(ui)
-        for _, plugin in pairs(
-            ui and ui.menu and ui.menu.registered_widgets or {}
-        ) do
-            add(plugin)
+        if type(ui)~="table"or seen_ui[ui]then return end
+        seen_ui[ui]=true;uis[#uis+1]=ui
+        for _,plugin in pairs(ui.menu and ui.menu.registered_widgets or {})do add(plugin)end
+        -- Some plugins live on the UI but register through a different menu.
+        for name,plugin in pairs(ui)do
+            if type(name)=="string"and type(plugin)=="table"and plugin.ui==ui
+                and type(plugin.addToMainMenu)=="function"then add(plugin)end
+        end
+        for _,definition in pairs(loader.enabled_plugins or {})do
+            if type(definition)=="table"and type(definition.name)=="string"then add(ui[definition.name])end
         end
     end
-
     addUI(owner and owner.ui)
-    for _, module in ipairs({
-        "apps/reader/readerui",
-        "apps/filemanager/filemanager",
-    }) do
-        local loaded, ui_class = pcall(require, module)
-        if loaded then addUI(ui_class.instance) end
+    for _,module in ipairs({"apps/reader/readerui","apps/filemanager/filemanager"})do
+        local class=package.loaded[module]
+        if class then addUI(class.instance)end
     end
-
-    for _, plugin in ipairs(candidates) do
-        if type(plugin.addToMainMenu) == "function" then
-            local items = {}
-            local registered_ok, err = pcall(plugin.addToMainMenu, plugin, items)
-            if registered_ok then
-                for id, item in pairs(items) do
-                    if type(item) == "table" then
-                        registered[id] = {
-                            item = item,
-                            plugin = plugin,
-                        }
-                    end
+    for _,plugin in pairs(loader.loaded_plugins or {})do add(plugin)end
+    local function actionable(item)
+        return type(item)=="table"and(type(item.callback)=="function"
+            or type(item.sub_item_table_func)=="function"or type(item.sub_item_table)=="table")
+    end
+    local function clone(value,seen)
+        if type(value)~="table"then return value end
+        seen=seen or {};if seen[value]then return seen[value]end
+        local result={};seen[value]=result
+        for k,v in pairs(value)do result[k]=clone(v,seen)end
+        return result
+    end
+    local function snapshot(items,out,prefix,seen)
+        out=out or {};seen=seen or {};prefix=prefix or ""
+        if type(items)~="table"or seen[items]then return out end
+        seen[items]=true
+        for id,item in pairs(items)do
+            if type(item)=="table"then
+                local path=prefix..tostring(id);out[path]=item
+                snapshot(item.sub_item_table,out,path.."/",seen)
+            end
+        end
+        return out
+    end
+    local function collect(items,plugin,before,prefix,seen,context_plugin)
+        seen=seen or {};prefix=prefix or ""
+        if type(items)~="table"or seen[items]then return end
+        seen[items]=true
+        for id,item in pairs(items)do
+            local path=prefix..tostring(id)
+            if actionable(item)and(not before or before[path]~=item)then
+                local key=type(id)=="string"and id or tostring(plugin.name or "plugin")..":"..path
+                if not registered[key]then registered[key]={item=item,plugin=plugin,context_plugin=context_plugin}end
+            elseif type(item)=="table"then collect(item.sub_item_table,plugin,before,path.."/",seen,context_plugin)end
+        end
+    end
+    for _,plugin in ipairs(candidates)do
+        if type(plugin.addToMainMenu)=="function"then
+            local items={}
+            local registered_ok,err=pcall(plugin.addToMainMenu,plugin,items)
+            collect(items,plugin)
+            -- Registration may depend on existing core menu sections. Probe a
+            -- private copy so discovery never mutates the real KOReader menu.
+            if not registered_ok or not next(items)then
+                local ui=plugin.ui
+                local menu=ui and ui.menu and ui.menu.menu_items
+                if type(menu)=="table"then
+                    items=clone(menu)
+                    local before=snapshot(items)
+                    local retry_ok=pcall(plugin.addToMainMenu,plugin,items)
+                    collect(items,plugin,before)
+                    registered_ok=registered_ok or retry_ok
                 end
-            else
-                logger.warn("Slate: quicklaunch menu registration failed:", err)
+            end
+            if not registered_ok then logger.warn("Slate: quicklaunch menu registration failed:",plugin.name,err)end
+            -- A reader-gated plugin can use a different menu ID from its folder
+            -- name (e.g. zlibrary_main). Discover those IDs in a private browser-
+            -- shaped registration context. These callbacks are NEVER launched.
+            -- Real ReaderUI and plugin instances remain untouched.
+            local ui=plugin.ui
+            if type(ui)=="table"and(ui.document or ui.view)then
+                local browser_ui={}
+                for key,value in pairs(ui)do
+                    if key~="document"and key~="view"then browser_ui[key]=value end
+                end
+                local browser_plugin=setmetatable({ui=browser_ui},{__index=function(_,key)
+                    if key~="document"and key~="view"then return plugin[key]end
+                end})
+                local browser_items={}
+                pcall(plugin.addToMainMenu,browser_plugin,browser_items)
+                collect(browser_items,plugin,nil,nil,nil,canonicalName(plugin))
             end
         end
     end
-
-    local entries = {}
-    for id, source in pairs(registered) do
-        local item = source.item
-        local actionable = type(item.callback) == "function"
-            or type(item.sub_item_table_func) == "function"
-            or type(item.sub_item_table) == "table"
-
-        if type(id) == "string" and id ~= "slate" and actionable then
-            local label = item.text or id
-            if type(item.text_func) == "function" then
-                local text_ok, text = pcall(item.text_func)
-                if text_ok and type(text) == "string" then
-                    label = text
-                end
+    local entries,current={},{}
+    for id,source in pairs(registered)do
+        local item=source.item
+        if type(id)=="string"and id~="slate"then
+            local label=item.text or id
+            if type(item.text_func)=="function"then
+                local label_ok,value=pcall(item.text_func)
+                if label_ok and type(value)=="string"then label=value end
             end
-
-            local enabled = item.enabled ~= false
-            if enabled and type(item.enabled_func) == "function" then
-                local enabled_ok, value = pcall(item.enabled_func)
-                enabled = enabled_ok and not not value
+            local enabled=item.enabled~=false
+            if enabled and type(item.enabled_func)=="function"then
+                local enabled_ok,value=pcall(item.enabled_func)
+                enabled=enabled_ok and not not value
             end
-
-            entries[#entries + 1] = {
-                id = id,
-                text = label,
-                enabled = not not enabled,
-                item = item,
-                plugin = source.plugin,
-            }
+            entries[#entries+1]={id=id,text=label,enabled=source.context_plugin and true or not not enabled,
+                item=source.context_plugin and {}or item,plugin=source.plugin,
+                context_plugin=source.context_plugin}
+            current[id]=true
         end
     end
-
+    -- Retain discovered names through temporary UI-context gaps, without
+    -- retaining callbacks bound to an old reader or filemanager instance.
+    -- Keep only strings in the persistent catalog. ReaderUI replaces and closes
+    -- FileManager, so callbacks from that previous UI must never be retained.
+    self._known_entries=self._known_entries or G_reader_settings:readSetting("slate.quicklaunch_catalog",{})
+    if type(self._known_entries)~="table"then self._known_entries={}end
+    local catalog_changed=false
+    local enabled_names,disabled_names={},{}
+    for _,definition in pairs(loader.enabled_plugins or {})do if type(definition)=="table"then enabled_names[definition.name or ""]=true end end
+    for _,definition in pairs(loader.disabled_plugins or {})do if type(definition)=="table"then disabled_names[definition.name or ""]=true end end
+    local catalog_known=type(loader.enabled_plugins)=="table"
+    for _,entry in ipairs(entries)do
+        local name=entry.plugin and canonicalName(entry.plugin)
+        local previous=self._known_entries[entry.id]
+        if not previous or previous.text~=entry.text or previous.name~=name then catalog_changed=true end
+        self._known_entries[entry.id]={text=entry.text,name=name}
+    end
+    for id,known in pairs(self._known_entries)do
+        local definition=by_name[normalized(known.name)]
+        if definition then known.name=definition.name end
+        if disabled_names[known.name or ""]or(catalog_known and known.name and not enabled_names[known.name])then
+            self._known_entries[id]=nil
+            catalog_changed=true
+        elseif not current[id]then
+            entries[#entries+1]={id=id,text=known.text,enabled=true,item={},
+                context_plugin=known.name,unavailable=not known.name}
+            current[id]=true
+        end
+    end
+    -- Also discover context-gated plugins on a cold start directly into a book,
+    -- before this process has ever displayed their file-browser menu entries.
+    local represented={}
+    for _,entry in ipairs(entries)do
+        represented[entry.context_plugin or entry.plugin and canonicalName(entry.plugin)or ""]=true
+    end
+    for _,definition in pairs(loader.enabled_plugins or {})do
+        local name=type(definition)=="table"and definition.name
+        if name and name~="slate"and not represented[name]and not current[name]
+            and type(definition.addToMainMenu)=="function"and not definition.is_doc_only then
+            entries[#entries+1]={id=name,text=definition.fullname or name,enabled=true,
+                item={},context_plugin=name}
+        end
+    end
+    if catalog_changed then
+        G_reader_settings:saveSetting("slate.quicklaunch_catalog",self._known_entries)
+        G_reader_settings:flush()
+    end
     return sortEntries(entries)
 end
 
@@ -223,7 +319,7 @@ function QuickLaunch:getEntries(owner, section)
         if type(id) == "string" then selected[id] = true end
     end
     for _, entry in ipairs(self:getAvailableEntries(owner)) do
-        if selected[entry.id] then
+        if selected[entry.id] or entry.plugin and selected[entry.plugin.name] then
             entries[#entries + 1] = entry
         end
     end
@@ -231,6 +327,28 @@ function QuickLaunch:getEntries(owner, section)
 end
 
 function QuickLaunch:launch(owner, entry)
+    if not entry or entry.enabled==false then return end
+    if entry and entry.system_action then
+        if entry.system_action=="restart"or entry.system_action=="exit"then
+            local event=entry.system_action=="restart"and "Restart"or "Exit"
+            self:close(owner)
+            UIManager:nextTick(function()
+                UIManager:broadcastEvent(require("ui/event"):new(event))
+            end)
+            return
+        end
+        require("slate_system"):open(owner,entry.system_action)
+        return
+    end
+    if entry and entry.context_plugin then
+        return self:launchInFileManager(owner,entry)
+    end
+    if entry and entry.unavailable then
+        UIManager:show(SlateUtils:themePopup(InfoMessage:new{modal=true,
+            text=_("This plugin is unavailable in the current KOReader view. Open the KOReader file browser and try again."),
+        }))
+        return
+    end
     if not entry or not entry.enabled then return end
     self:close(owner)
     local screen = owner._slate_screen
@@ -268,32 +386,72 @@ function QuickLaunch:launch(owner, entry)
     end)
 end
 
+function QuickLaunch:launchInFileManager(owner,entry)
+    self:close(owner)
+    if owner._slate_screen then ScreenSaverWidget.onClose(owner._slate_screen)end
+    UIManager:nextTick(function()
+        local ok,err=pcall(function()
+            local ReaderUI=require("apps/reader/readerui")
+            local FileManager=require("apps/filemanager/filemanager")
+            if ReaderUI.instance then
+                -- Native onHome saves reading position and tears down the old
+                -- plugin instances before creating the file-browser instances.
+                ReaderUI.instance:onHome()
+            elseif not FileManager.instance then FileManager:showFiles()end
+            local ui=FileManager.instance
+            if not ui then error("File browser did not open")end
+            local current_owner=ui.slate or {ui=ui}
+            for _,fresh in ipairs(self:getAvailableEntries(current_owner))do
+                if not fresh.context_plugin and fresh.enabled and
+                    (fresh.id==entry.id or fresh.plugin and fresh.plugin.name==entry.context_plugin)then
+                    self:launch(current_owner,fresh)
+                    return
+                end
+            end
+            error("Plugin did not register a file-browser menu")
+        end)
+        if not ok then
+            logger.warn("Slate: context launch failed:",entry.context_plugin,err)
+            UIManager:show(InfoMessage:new{modal=true,text=_("This plugin could not be opened. Check that it is enabled in KOReader.")})
+        end
+    end)
+end
+
 local QuickLaunchPopup = InputContainer:extend{ modal = true }
 
 function QuickLaunchPopup:init()
     local w, h = Screen:getWidth(), Screen:getHeight()
     self.dimen = Screen:getSize()
     self.section = self.section or G_reader_settings:readSetting("slate.quicklaunch_page", "games")
-    if self.section ~= "apps" then self.section = "games" end
+    if self.section ~= "apps" and self.section ~= "system" then self.section = "games" end
+    if self.selection_mode and self.section=="system" then self.section="apps"end
     local available = QuickLaunch:getAvailableEntries(self.owner)
-    local lists = {games={},apps={}}
+    local lists = {games={},apps={},system={
+        {id="slate.system.wifi",text=_("Wi-Fi"),enabled=true,system_action="wifi"},
+        {id="slate.system.bluetooth",text=_("Bluetooth"),enabled=true,system_action="bluetooth"},
+        {id="slate.system.restart",text=_("Restart KOReader"),enabled=not Device.canRestart or Device:canRestart(),system_action="restart"},
+        {id="slate.system.exit",text=_("Exit KOReader"),enabled=true,system_action="exit"},
+    }}
     for _, section in ipairs({"games","apps"}) do
         local selected = {}
         for _,id in ipairs(selectedIds(section)) do selected[id]=true end
         for _,entry in ipairs(available) do
-            if selected[entry.id] then lists[section][#lists[section]+1]=entry end
+            if selected[entry.id] or entry.plugin and selected[entry.plugin.name] then lists[section][#lists[section]+1]=entry end
         end
     end
     self.entries = self.selection_mode and available or lists[self.section]
-    self.layout_lists = self.selection_mode and {available} or {lists.games,lists.apps}
+    self.layout_lists = self.selection_mode and {available} or {lists.games,lists.apps,lists.system}
     self.column_count = not self.selection_mode and #self.entries > 12 and 3 or 2
     local largest_rows = self.selection_mode and math.ceil(#available / 2)
-        or math.max(math.ceil(#lists.games / (#lists.games > 12 and 3 or 2)), math.ceil(#lists.apps / (#lists.apps > 12 and 3 or 2)))
+        or math.max(2,math.ceil(#lists.games / (#lists.games > 12 and 3 or 2)), math.ceil(#lists.apps / (#lists.apps > 12 and 3 or 2)))
     self.pending = {}
 
     if self.selection_mode then
         for _, id in ipairs(selectedIds(self.section)) do
             self.pending[id] = true
+        end
+        for _,entry in ipairs(available)do
+            if entry.plugin and self.pending[entry.plugin.name]then self.pending[entry.id]=true end
         end
     end
 
@@ -330,15 +488,18 @@ function QuickLaunchPopup:init()
             - self.warning_h - self.row_h * 2
             - (not self.selection_mode and self.footer_gap or 0)) / self.row_h))
 
-    self.row_count = math.min(max_rows,
+    self.frame_rows = math.min(max_rows,
         math.max(1, largest_rows))
+    self.row_count = not self.selection_mode and self.section=="system"
+        and math.min(2,self.frame_rows)or self.frame_rows
     self.page_size = self.row_count * self.column_count
     self.pages = math.max(1, math.ceil(#self.entries / self.page_size))
-    self.pager_reserved = largest_rows > self.row_count
+    self.frame_pager_reserved = largest_rows > self.frame_rows
+    self.pager_reserved = self.frame_pager_reserved and self.section~="system"
 
     self.box.h = self.pad * 2 + self.title_h + self.title_gap + self.warning_h
-        + self.row_count * self.row_h
-        + (self.pager_reserved and self.row_h or 0)
+        + self.frame_rows * self.row_h
+        + (self.frame_pager_reserved and self.row_h or 0)
         + self.row_h + (not self.selection_mode and self.footer_gap or 0)
 
     self.box.x = math.floor((w - self.box.w) / 2)
@@ -386,7 +547,7 @@ function QuickLaunchPopup:paintTo(bb)
     }
 
     self.add_button = nil
-    if not self.selection_mode then
+    if not self.selection_mode and self.section~="system" then
         local size = math.min(row, self.title_h)
         local glyph_size = math.max(1, math.floor(self.header_icon_size))
         local inset = G_reader_settings:readSetting("slate.popup_header_icons", true) == true
@@ -485,10 +646,14 @@ function QuickLaunchPopup:paintTo(bb)
     -- Use the same column anchors on both tabs and every page.
     column_widths = {}
     for column = 1, columns do column_widths[column] = 0 end
+    -- System displays two rows inside the shared taller frame. Measure plugin
+    -- columns using that frame's capacity, as Apps does, rather than System's
+    -- four-item page size; otherwise their text anchors shift between tabs.
+    local anchor_page_size = self.frame_rows and self.frame_rows * columns or self.page_size
     for _, list in ipairs(self.layout_lists) do
         for index, entry in ipairs(list) do
-            local first_index = math.floor((index-1)/self.page_size)*self.page_size+1
-            local page_count = math.min(self.page_size,#list-first_index+1)
+            local first_index = math.floor((index-1)/anchor_page_size)*anchor_page_size+1
+            local page_count = math.min(anchor_page_size,#list-first_index+1)
             local column = math.floor((index-first_index) / math.max(1, math.ceil(page_count/columns))) + 1
             local label = self.selection_mode and "[✓] "..tostring(entry.text):upper()
                 or "[ "..tostring(entry.text):upper().." ]"
@@ -518,8 +683,13 @@ function QuickLaunchPopup:paintTo(bb)
                 local ok = pcall(function()
                     local icon_size=math.floor(size)
                     self:paintHeaderCircle(bb,rect)
-                    image=ImageWidget:new{file=path,width=icon_size,height=icon_size,
-                        alpha=true,original_in_nightmode=false,invert=false}
+                    if self.section=="system"then
+                        image=IconWidget:new{icon="appbar.settings",width=icon_size,height=icon_size,
+                            alpha=true,original_in_nightmode=false,invert=false}
+                    else
+                        image=ImageWidget:new{file=path,width=icon_size,height=icon_size,
+                            alpha=true,original_in_nightmode=false,invert=false}
+                    end
                     image:paintTo(bb,rect.x+math.floor((size-icon_size)/2),rect.y+math.floor((size-icon_size)/2))
                 end)
                 if image then image:free() end
@@ -531,8 +701,8 @@ function QuickLaunchPopup:paintTo(bb)
         end
         if G_reader_settings:readSetting("slate.popup_header_text",true)==true then
             local text_rect={x=header_x,y=title.y,
-                w=math.max(1,self.add_button.x-self.pad-header_x),h=self.title_h}
-            drawText(bb,self.section == "apps" and _("APPS QUICK LAUNCH")
+                w=math.max(1,(self.add_button and self.add_button.x-self.pad or x+width)-header_x),h=self.title_h}
+            drawText(bb,self.section=="system"and _("SYSTEM")or self.section == "apps" and _("APPS QUICK LAUNCH")
                 or _("GAMES QUICK LAUNCH"),text_rect,self.font_size+2,true,false)
         end
     end
@@ -624,13 +794,13 @@ function QuickLaunchPopup:paintTo(bb)
     end
     self.tab_buttons = {}
     if not self.selection_mode then
-        local tab_y = list_y+self.row_count*row+(self.pager_reserved and row or 0)+self.footer_gap
+        local tab_y = list_y+self.frame_rows*row+(self.frame_pager_reserved and row or 0)+self.footer_gap
         local gap=math.max(8,Screen:scaleBySize(8))
-        local tab_w=math.floor((width-gap)/2)
-        for i, name in ipairs({_('GAMES'),_('APPS')}) do
+        local tab_w=math.floor((width-gap*2)/3)
+        for i, name in ipairs({_('GAMES'),_('APPS'),_('SYSTEM')}) do
             local rect={x=x+(i-1)*(tab_w+gap),y=tab_y,w=tab_w,h=row}
             self.tab_buttons[i]=rect
-            local active=(i==1 and self.section=='games') or (i==2 and self.section=='apps')
+            local active=SECTIONS[i]==self.section
             local fg=active and Blitbuffer.COLOR_WHITE or Blitbuffer.COLOR_BLACK
             local bg=active and Blitbuffer.COLOR_BLACK or Blitbuffer.COLOR_WHITE
             bb:paintRoundedRect(rect.x,rect.y,rect.w,rect.h,bg,button_radius)
@@ -728,7 +898,7 @@ function QuickLaunchPopup:onTap(_, ges)
 
     for i, rect in ipairs(self.tab_buttons or {}) do
         if contains(self:touchRect(rect), pos) then
-            local section = i==1 and "games" or "apps"
+            local section = SECTIONS[i]
             if section ~= self.section then
                 self.section=section
                 G_reader_settings:saveSetting("slate.quicklaunch_page", section)
@@ -791,7 +961,9 @@ function QuickLaunchPopup:onSwipe(_, ges)
     if not ges or not contains(self.box, ges.pos) then return true end
 
     if not self.selection_mode and (ges.direction=="west" or ges.direction=="east") then
-        local section=ges.direction=="west" and "apps" or "games"
+        local index=1
+        for i,name in ipairs(SECTIONS)do if name==self.section then index=i;break end end
+        local section=SECTIONS[math.max(1,math.min(#SECTIONS,index+(ges.direction=="west"and 1 or -1)))]
         if section~=self.section then
             self.section=section;self.page=1
             G_reader_settings:saveSetting("slate.quicklaunch_page",section)
@@ -817,6 +989,8 @@ end
 function QuickLaunchPopup:onCloseWidget()
     if self.owner._slate_quicklaunch_popup == self then
         self.owner._slate_quicklaunch_popup = nil
+        local system=package.loaded.slate_system
+        if system then system:close(self.owner)end
     end
     if self.owner._slate_quicklaunch_picker == self then
         self.owner._slate_quicklaunch_picker = nil
@@ -842,6 +1016,8 @@ function QuickLaunch:showSelection(owner, section)
 end
 
 function QuickLaunch:close(owner)
+    local system=package.loaded.slate_system
+    if system then system:close(owner)end
     if owner._slate_quicklaunch_popup then
         UIManager:close(owner._slate_quicklaunch_popup)
     end

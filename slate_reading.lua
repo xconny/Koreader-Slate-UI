@@ -33,20 +33,55 @@ local SlateReading = {}
 
 local DEFAULT_CUSTOM_BG_PATH = "/mnt/us/wallpapers/sleepscreen.jpg"
 
+function SlateReading:advanceCustomBackground()
+    self._custom_bg_rotation_pending=true
+end
+
 function SlateReading:getCustomBgPath()
-    local path
-    if G_reader_settings then
-        path = G_reader_settings:readSetting("slate_weather_custom_bg_path")
+    local selected=G_reader_settings and G_reader_settings:readSetting("slate_weather_custom_bg_path")
+    if type(selected)~="string"or selected==""then selected=DEFAULT_CUSTOM_BG_PATH end
+    if not selected:match("^/")then selected="/mnt/us/wallpapers/"..selected end
+    if not G_reader_settings or G_reader_settings:readSetting("slate_weather_custom_bg_rotate",false)~=true then
+        self._custom_bg_rotation=nil
+        return selected
     end
-
-    if path and path ~= "" then
-        if not path:match("^/") then
-            path = "/mnt/us/wallpapers/" .. path
+    local folder=G_reader_settings:readSetting("slate_weather_custom_bg_folder")
+    if type(folder)~="string"or folder==""then folder=selected:match("^(.*)/[^/]+$")or "/mnt/us/wallpapers"end
+    if not folder:match("^/")then folder="/mnt/us/wallpapers/"..folder end
+    folder=folder:gsub("/+$","");if folder==""then folder="/"end
+    local cached=self._custom_bg_rotation
+    if not self._custom_bg_rotation_pending and cached and cached.folder==folder and cached.selected==selected
+        and util.fileExists(cached.path)then return cached.path end
+    local images={}
+    local ok=pcall(function()
+        local lfs=require("libs/libkoreader-lfs")
+        local supported={png=true,jpg=true,jpeg=true,gif=true,bmp=true,webp=true,tif=true,tiff=true,svg=true}
+        for name in lfs.dir(folder)do
+            local extension=name:lower():match("%.([^.]+)$")
+            local path=(folder=="/"and "/"or folder.."/")..name
+            if supported[extension]and lfs.attributes(path,"mode")=="file"then images[#images+1]=path end
         end
-        return path
+    end)
+    if not ok or #images==0 then
+        self._custom_bg_rotation=nil;self._custom_bg_rotation_pending=nil
+        return selected
     end
-
-    return DEFAULT_CUSTOM_BG_PATH
+    table.sort(images,function(a,b)
+        local al,bl=a:lower(),b:lower()
+        return al==bl and a<b or al<bl
+    end)
+    local previous=cached and cached.folder==folder and cached.selected==selected and cached.path
+        or (not cached and G_reader_settings:readSetting("slate_weather_custom_bg_rotation_last"))or selected
+    local index=1
+    for i,path in ipairs(images)do
+        if path==previous then index=self._custom_bg_rotation_pending and (i%#images+1)or i;break end
+    end
+    local path=images[index]
+    self._custom_bg_rotation_pending=nil
+    self._custom_bg_rotation={folder=folder,selected=selected,path=path}
+    G_reader_settings:saveSetting("slate_weather_custom_bg_rotation_last",path)
+    G_reader_settings:flush()
+    return path
 end
 
 local function getCustomImageScaleMultiplier()

@@ -713,10 +713,26 @@ function SlateQuotes:buildMenu()
     })
 
     local settings_item = {
-        text = _("Quote settings"),
+        text = _("Extra settings"),
         sub_item_table = {},
     }
     table.insert(items, settings_item)
+
+    table.insert(items, {
+        text = _("Include notes"),
+        checked_func = function() return read_setting("include_notes",false)==true end,
+        callback = function(menu)
+            write_setting("include_notes",read_setting("include_notes",false)~=true)
+            extraction_cache={}
+            local ok,err=pcall(SlateQuotes.extract_highlights_to_quotes,true)
+            if not ok then
+                UIManager:show(SlateUtils:themePopup(InfoMessage:new{
+                    text=string.format(_("Could not refresh quotes: %s"),tostring(err)),
+                }))
+            end
+            if menu and menu.updateItems then menu:updateItems()end
+        end,
+    })
 
     table.insert(settings_item.sub_item_table, {
         text_func = function()
@@ -910,6 +926,7 @@ function SlateQuotes:buildMenu()
 end
 
 function SlateQuotes.extract_highlights_to_quotes(force)
+    local include_notes=read_setting("include_notes",false)==true
     local candidate_dirs = {
         plugin_book_dir, "/mnt/base-us/books", "/mnt/us/books",
         "/mnt/us/Books", "/mnt/us/documents",
@@ -967,7 +984,7 @@ function SlateQuotes.extract_highlights_to_quotes(force)
         end
         table.sort(names)
         local previous = extraction_cache[path]
-        local same = not force and previous and previous.navigation_version == 1
+        local same = not force and previous and previous.navigation_version == 2 and previous.include_notes==include_notes
             and #previous.names == #names
         if same then
             for index, filename in ipairs(names) do
@@ -1028,10 +1045,10 @@ function SlateQuotes.extract_highlights_to_quotes(force)
                 visited_pools[pool] = true
                 for key, ann in pairs(pool) do
                     if type(ann) == "table" then
-                        local value = ann.text or ann.highlight or ann.highlighted_text
-                            or ann.selection or ann.note or ann.notes
+                        local value = ann.text or ann.highlight or ann.highlighted_text or ann.selection
+                        if include_notes and (type(value)~="string" or not value:match("%S")) then value=ann.note or ann.notes end
                         if type(value) == "string" then add(value, ann, page)
-                        else extract(ann, tonumber(key) or page) end
+                        elseif not ann.note and not ann.notes then extract(ann, tonumber(key) or page) end
                     elseif type(ann) == "string" then add(ann, nil, page) end
                 end
             end
@@ -1047,7 +1064,7 @@ function SlateQuotes.extract_highlights_to_quotes(force)
                 end
             end
         end
-        next_cache[path] = { names = names, files = files, records = records, navigation_version = 1 }
+        next_cache[path] = { names = names, files = files, records = records, navigation_version = 2, include_notes=include_notes }
         for index, quote in ipairs(records) do
             local key = quote.text .. "\x1f" .. quote.book .. "\x1f" .. quote.author
             if not seen[key] then seen[key] = true; found[#found + 1] = quote end

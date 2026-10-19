@@ -613,6 +613,21 @@ function Popup:rebuild()
     local row_heading=categories and heading_h+heading_gap or 0
     local cover_budget=math.max(rows,available-folder_space-row_gap*(rows-1)-(row_heading+progress_space)*rows)
     local row_height=math.max(1,math.floor(math.min(tile_w/.69,cover_budget/rows)))
+    local folder_start
+    if self.folder then
+        -- Match the Categories page's first heading, independent of the
+        -- folder's number of books or its separately configured grid.
+        local category_rows=o.category_rows
+        local category_columns=o.category_columns
+        local category_tile_w=math.max(1,math.floor((c.w-self.gap*(category_columns-1))/category_columns))
+        local category_heading=heading_h+heading_gap
+        local category_budget=math.max(category_rows,available-row_gap*(category_rows-1)-category_heading*category_rows)
+        local category_height=math.max(1,math.floor(math.min(category_tile_w/.69,category_budget/category_rows)))
+        local category_reserved=category_rows*(category_height+category_heading)+math.max(0,category_rows-1)*row_gap
+        folder_start=math.floor(header_bottom+(button_y-header_bottom-category_reserved)/2+.5)-math.floor((heading_h-font_h)/4)
+        local folder_budget=button_y-self.bottom_pad-folder_start-folder_space-row_gap*(rows-1)-progress_space*rows
+        row_height=math.max(1,math.min(row_height,math.floor(folder_budget/rows)))
+    end
     for _,group in ipairs(groups)do
         group.aspects={}
         for i,entry in ipairs(group.entries)do
@@ -625,7 +640,7 @@ function Popup:rebuild()
     local stable_recents=self.kind=='recents' and self.view~='categories'
     local slot_rows=stable_recents and math.min(rows,math.ceil(#self.entries/columns))or rows
     local reserved=(categories or stable_recents)and (slot_rows*(row_height+row_heading+progress_space)+math.max(0,slot_rows-1)*row_gap)or block
-    local y=header_bottom+(button_y-header_bottom-reserved)/2
+    local y=folder_start or header_bottom+(button_y-header_bottom-reserved)/2
     local first_row_gap=y-header_bottom
     if self.folder then
         self.folder_title_rect={x=c.x,y=math.floor(y+.5),w=c.w,h=heading_h}
@@ -664,7 +679,7 @@ function Popup:rebuild()
         include(tile.cover.y,tile.cover.y+tile.cover.h+(tile.progress and progress_space or 0))
     end
     if visible_top<math.huge then
-        local dy=categories and -math.floor((heading_h-font_h)/4)or stable_recents and 0 or math.floor(header_bottom+(button_y-header_bottom-(visible_bottom-visible_top))/2-visible_top+.5)
+        local dy=categories and -math.floor((heading_h-font_h)/4)or (stable_recents or self.folder)and 0 or math.floor(header_bottom+(button_y-header_bottom-(visible_bottom-visible_top))/2-visible_top+.5)
         local shifted={}
         local function shift(r)if r and not shifted[r]then r.y=r.y+dy;shifted[r]=true end end
         shift(self.folder_title_rect)
@@ -1544,8 +1559,8 @@ function Popup:paintTo(bb)
         local key = self.kind == "recents" and "recents" or "library"
         local path = G_reader_settings:readSetting("slate.widget_icons."..key)
         if type(path) ~= "string" or path == "" or not util.fileExists(path) then
-            path = key == "library" and type(self.owner.getPluginDir) == "function"
-                and self.owner:getPluginDir().."/icons/library.svg" or nil
+            path = type(self.owner.getPluginDir) == "function"
+                and self.owner:getPluginDir().."/icons/"..key..".svg" or nil
         end
         local icon
         local ok, err = pcall(function()
