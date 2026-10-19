@@ -407,7 +407,7 @@ function Settings:buildPopupHeaders(owner)
     end
     return {
         headerToggle("slate.popup_header_icons", _("Show popup header icons"), true),
-        headerToggle("slate.popup_header_outline", _("Show header icon outline"), true),
+        headerToggle("slate.popup_header_outline", _("Show header icon outline"), false),
         headerToggle("slate.popup_header_text", _("Show popup header text"), true),
                 {
                     text_func = function()

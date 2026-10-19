@@ -2,9 +2,11 @@
 -- Adapted from ZenOS (xZenLabs and contributors), 2026-10-19.
 -- https://github.com/xZenLabs/zen-os
 -- Original license: slate_system_licenses.lua. Changes: Slate logging and
--- profile operations only; UI scans use KOReader's native network manager.
+-- profile operations and asynchronous scans; the picker reads real scanList
+-- results even while connected, bypassing KOReader's current-profile shortcut.
 -- GPLv3 section 13 permits combination with Slate's AGPLv3 code.
 local ffiutil = require("ffi/util")
+local UIManager = require("ui/uimanager")
 local logger = require("logger")
 
 local M = {}
@@ -14,12 +16,12 @@ local function is_secured(network)
     return flags:find("WPA", 1, true) ~= nil or flags:find("SAE", 1, true) ~= nil
 end
 
-local function lipc_handle()
+local function lipc_handle(client)
     local ok_lipc, lipc = pcall(require, "liblipclua")
     if not ok_lipc or type(lipc.init) ~= "function" then
         return nil, "liblipclua unavailable"
     end
-    local ok_handle, handle = pcall(lipc.init, "com.github.koreader.networkmgr")
+    local ok_handle, handle = pcall(lipc.init, client or "com.github.koreader.slate.wifi")
     if not ok_handle or not handle then return nil, tostring(handle) end
     return handle
 end
@@ -177,6 +179,73 @@ function M.new(NetworkMgr)
         return create_profile(network)
     end
 
+    local closed,scan_handle,scan_poll,scan_done=false,nil,nil,nil
+    local function finish_scan(ok,err)
+        if scan_poll then UIManager:unschedule(scan_poll);scan_poll=nil end
+        if scan_handle then pcall(scan_handle.close,scan_handle);scan_handle=nil end
+        local done=scan_done;scan_done=nil
+        if done then
+            local called,why=pcall(done,ok,err)
+            if not called then logger.warn("Slate: Wi-Fi scan callback failed:",why)end
+        end
+    end
+    function adapter.getNetworkList()
+        local list,err=read_hash("scanList")
+        if not list then return nil,err end
+        local profiles=read_hash("profileData")or {}
+        local saved={}
+        for _,profile in pairs(profiles)do
+            if type(profile)=="table"and profile.essid then saved[profile.essid]=profile end
+        end
+        local ok,current=pcall(NetworkMgr.getCurrentNetwork,NetworkMgr)
+        local current_ssid=ok and current and current.ssid
+        local networks,by_ssid={},{}
+        for _,raw in pairs(list)do
+            if type(raw)=="table"then
+                local ssid=raw.essid or raw.ssid
+                if type(ssid)=="string"and ssid~=""then
+                    local profile=saved[ssid]
+                    local signal,maximum=tonumber(raw.signal),tonumber(raw.signal_max)
+                    local quality=signal and maximum and maximum>0 and math.floor(signal*100/maximum)
+                        or tonumber(raw.signal_quality)or 0
+                    local item={ssid=ssid,connected=ssid==current_ssid,
+                        flags=raw.key_mgmt or raw.smethod or(profile and profile.smethod)or "",
+                        password=profile and profile.psk,signal_quality=quality}
+                    if not by_ssid[ssid]then
+                        networks[#networks+1]=item;by_ssid[ssid]=item
+                    elseif quality>by_ssid[ssid].signal_quality then by_ssid[ssid].signal_quality=quality end
+                end
+            end
+        end
+        logger.info("Slate: Kindle scanList returned",#networks,"distinct networks")
+        return networks
+    end
+    function adapter.scan(done)
+        if closed then done(false,"Scanner is closed.");return end
+        if scan_done then adapter.cancelScan()end
+        local handle,err=lipc_handle("com.github.koreader.slate.wifi.scan")
+        if not handle then done(false,err);return end
+        local requested,why=pcall(handle.set_string_property,handle,"com.lab126.wifid","scan","")
+        if not requested then pcall(handle.close,handle);done(false,why);return end
+        scan_handle=handle;scan_done=done
+        local attempts,started,idle_polls=0,false,0
+        scan_poll=function()
+            if closed or not scan_handle then return end
+            attempts=attempts+1
+            local read,state=pcall(handle.get_string_property,handle,"com.lab126.wifid","scanState")
+            if not read then finish_scan(false,"Firmware did not expose Wi-Fi scan state.");return end
+            local scanning=type(state)=="string"and state~="idle"and state~=""
+            if scanning then started=true;idle_polls=0 else idle_polls=idle_polls+1 end
+            -- Some firmware still reports idle just after accepting the scan.
+            -- Keep the LIPC request alive and wait before collecting results.
+            if not scanning and idle_polls>=2 and(started or attempts>=9)then finish_scan(true)
+            elseif attempts>=80 then finish_scan(false,"Wi-Fi scan timed out.")
+            else UIManager:scheduleIn(.25,scan_poll)end
+        end
+        UIManager:scheduleIn(.25,scan_poll)
+    end
+    function adapter.cancelScan()finish_scan(false,"Cancelled.")end
+    function adapter.close()closed=true;adapter.cancelScan()end
     return adapter
 end
 

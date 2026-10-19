@@ -475,8 +475,10 @@ function Popup:init()
     self.bottom_pad = math.max(10, math.floor(math.min(
         math.floor(w * 0.96), Screen:scaleBySize(900)) * 0.045))
     self.gap = math.max(6, Screen:scaleBySize(7))
-    self.header_icon_size = math.max(16,math.min(200,
+    self.header_glyph_size = math.max(16,math.min(200,
         tonumber(G_reader_settings:readSetting("slate.popup_header_icon_size",72)) or 72))
+    self.header_icon_size = G_reader_settings:readSetting("slate.popup_header_outline",false)==true
+        and math.floor(self.header_glyph_size/.58+.5) or self.header_glyph_size
     self.title_h = math.max(30, Screen:scaleBySize(44))
     if G_reader_settings:readSetting("slate.popup_header_icons",true)==true then
         self.title_h=math.max(self.title_h,self.header_icon_size)
@@ -1551,9 +1553,9 @@ function Popup:paintTo(bb)
         local size = self.header_icon_size
         local icon_x = header_x
         local icon_y = r.y+self.pad+math.floor((self.title_h-size)/2)
-        local icon_size = math.max(1, math.floor(size))
+        local icon_size = self.header_glyph_size
         bb:paintRoundedRect(icon_x,icon_y,size,size,Blitbuffer.COLOR_WHITE,math.floor(size/2))
-        if G_reader_settings:readSetting("slate.popup_header_outline",true)~=false then
+        if G_reader_settings:readSetting("slate.popup_header_outline",false)==true then
             bb:paintBorder(icon_x,icon_y,size,size,math.max(1,math.floor(size/14)),Blitbuffer.COLOR_BLACK,math.floor(size/2))
         end
         local key = self.kind == "recents" and "recents" or "library"

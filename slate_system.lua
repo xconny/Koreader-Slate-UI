@@ -82,47 +82,122 @@ end
 function Session:list(title, items, back)
     if self.closed then return end
     self:clearView()
-    for _, item in ipairs(items) do
+    for _,item in ipairs(items)do
         if item.enabled==false then item.select_enabled=false end
-        if item.callback then item.callback=self:defer(item.callback) end
+        if item.callback then item.callback=self:defer(item.callback)end
     end
-    local menu=require("ui/widget/menu"):new{
+    local Geom=require("ui/geometry")
+    local InputContainer=require("ui/widget/container/inputcontainer")
+    local padding=math.max(10,Screen:scaleBySize(12))
+    local border=2
+    local width=math.min(math.floor(Screen:getWidth()*.90),Screen:scaleBySize(820))
+    local height=math.floor(Screen:getHeight()*.65)
+    local inner_width=width-2*(padding+border)
+    local pager_width=math.min(inner_width,Screen:scaleBySize(440))
+    local host=InputContainer:new{modal=true,dimen=Screen:getSize(),title=title}
+    local close=self:defer(function()
+        UIManager:close(host)
+        if back then back()else self:close()end
+    end)
+    -- Native Menu's default footer has four large spacers and unbounded
+    -- arrow buttons. Give this narrower picker its own compact controls.
+    local menu
+    local frame
+    local function pager(icon,method)
+        local button_width=math.floor(pager_width/8)
+        local icon_size=math.min(Screen:scaleBySize(24),math.floor(button_width*.6))
+        return require("ui/widget/button"):new{
+            icon=icon,icon_width=icon_size,icon_height=icon_size,
+            width=button_width,padding_h=0,bordersize=0,show_parent=host,
+            callback=function()if menu then menu[method](menu)end end,
+        }
+    end
+    menu=require("ui/widget/menu"):new{
         modal=true,title=title,item_table=items,
-        width=math.min(math.floor(Screen:getWidth()*.90),Screen:scaleBySize(820)),
-        height=math.floor(Screen:getHeight()*.65),items_per_page=7,
-        is_popout=false,show_parent=nil,
+        width=inner_width,height=height-2*(padding+border),
+        items_per_page=7,font_size=18,is_borderless=true,is_popout=false,show_parent=host,
+        page_info_first_chev=pager("chevron.first","onFirstPage"),
+        page_info_left_chev=pager("chevron.left","onPrevPage"),
+        page_info_right_chev=pager("chevron.right","onNextPage"),
+        page_info_last_chev=pager("chevron.last","onLastPage"),
+        page_info_spacer=require("ui/widget/horizontalspan"):new{
+            width=math.min(Screen:scaleBySize(6),math.floor(inner_width/40)),
+        },
     }
-    -- Center this instance only; never patch KOReader's Menu/Button classes.
-    local frame=menu[1]
-    if frame then
-        frame.radius=G_reader_settings:readSetting("slate.popup_corner_radius",40)
-        menu[1]=require("ui/widget/container/centercontainer"):new{dimen=Screen:getSize(),frame}
-        if menu.dimen then
-            menu.dimen.x=math.floor((Screen:getWidth()-menu.dimen.w)/2)
-            menu.dimen.y=math.floor((Screen:getHeight()-menu.dimen.h)/2)
-        end
-        local paint=menu.paintTo
-        if paint then
-            menu.paintTo=function(instance,...)
-                local result=paint(instance,...)
-                if frame.dimen then
-                    instance.dimen=require("ui/geometry"):new{
-                        x=frame.dimen.x,y=frame.dimen.y,w=frame.dimen.w,h=frame.dimen.h,
-                    }
-                end
-                return result
-            end
+    -- Do not let native HorizontalGroup's natural/cached width place the
+    -- pager outside this embedded menu. Bound its label and place each button
+    -- explicitly inside the menu, preserving native paging and page input.
+    local footer=menu.page_info
+    local controls={menu.page_info_first_chev,menu.page_info_left_chev,
+        menu.page_info_text,menu.page_info_right_chev,menu.page_info_last_chev}
+    local gap=menu.page_info_spacer.width
+    local arrow_width=math.floor(pager_width/8)
+    local label_width=pager_width-4*arrow_width-4*gap
+    local label=menu.page_info_text
+    local native_set_text=label.setText
+    label.setText=function(button,text)
+        return native_set_text(button,text,label_width)
+    end
+    label.width=label_width
+    label.padding_h=0
+    label.avoid_text_truncation=false
+    -- setText with identical text does not rebuild native Button geometry.
+    label:free()
+    label:init()
+    footer.getSize=function()
+        local h=0
+        for _,button in ipairs(controls)do h=math.max(h,button:getSize().h)end
+        return {w=pager_width,h=h}
+    end
+    footer.paintTo=function(_,bb,x,y)
+        local h=footer:getSize().h
+        -- Embedded/native menu offsets can differ from the visible frame.
+        -- Anchor to the frame actually painted, not the inherited footer x.
+        local bounds=(frame and frame.dimen)or host.box
+        local cursor=bounds.x+math.floor((bounds.w-pager_width)/2)
+        for index,button in ipairs(controls)do
+            local size=button:getSize()
+            button:paintTo(bb,cursor,y+math.floor((h-size.h)/2))
+            cursor=cursor+(index==3 and label_width or arrow_width)+gap
         end
     end
-    if back then menu.close_callback=self:defer(back) end
-    -- Native Menu invokes close_callback after every selection. Here it is
-    -- navigation back, so keep it exclusively for the close/back control.
+    -- Recalculate rows with the bounded footer's actual height.
+    menu:updateItems()
+    -- The native Menu paints its title/footer to its edges. Put a separate
+    -- padded frame OUTSIDE it, so these cannot erase the rounded outline.
+    frame=require("ui/widget/container/framecontainer"):new{
+        background=require("ffi/blitbuffer").COLOR_WHITE,
+        bordersize=border,padding=padding,margin=0,
+        radius=tonumber(G_reader_settings:readSetting("slate.popup_corner_radius",40))or 40,
+        menu,
+    }
+    host.box=Geom:new{x=math.floor((Screen:getWidth()-width)/2),
+        y=math.floor((Screen:getHeight()-height)/2),w=width,h=height}
+    host[1]=require("ui/widget/container/centercontainer"):new{dimen=Screen:getSize(),frame}
+    host.menu=menu
+    host.onClose=close
+    host.onCloseWidget=function(instance)
+        if instance[1]and instance[1].free then instance[1]:free()end
+        instance[1]=nil;instance.menu=nil
+    end
+    menu.onClose=function()close();return true end
+    menu.onCloseAllMenus=menu.onClose
     menu.onMenuSelect=function(_,item)
         if item.enabled~=false and item.select_enabled~=false and item.callback then item.callback()end
         return true
     end
-    self.view=menu
-    self:show(menu)
+    host.ges_events={Tap={require("ui/gesturerange"):new{ges="tap",range=Screen:getSize()}}}
+    host.onTap=function(_,arg,ges)
+        local r=frame.dimen or host.box
+        local pos=ges and ges.pos
+        if pos and(pos.x<r.x or pos.x>=r.x+r.w or pos.y<r.y or pos.y>=r.y+r.h)then
+            if not require("slate_popup_navigation"):switch(host,self.owner,ges)then close()end
+        end
+        return true
+    end
+    if Device:hasKeys()then host.key_events={Close={{"Back"}}}end
+    self.view=host
+    self:show(host)
 end
 -- Expensive scans and connection requests run in a cancellable subprocess.
 -- Only data comes back; UI and current NetworkMgr bookkeeping stay in parent.
@@ -167,6 +242,7 @@ function Session:close()
     self.closed=true
     if self.connecting then NetworkMgr.pending_connection=false;self.connecting=false end
     if self.bluetooth then self.bluetooth:close()end
+    if self.wifi_adapter then self.wifi_adapter.close()end
     for timer in pairs(self.timers)do UIManager:unschedule(timer)end
     self.timers={}
     -- Resume/cancel a trapped subprocess before closing its blocking widget.
@@ -219,29 +295,56 @@ function Session:toggleWifi(then_scan)
     end
     self:schedule(.5,ready)
 end
+function Session:networkResults(networks)
+    if self.closed then return end
+    networks=networks or {}
+    table.sort(networks,function(a,b)
+        if(not not a.connected)~=(not not b.connected)then return not not a.connected end
+        return(tonumber(a.signal_quality)or 0)>(tonumber(b.signal_quality)or 0)
+    end)
+    local items={{text=_("Refresh Networks"),callback=function()self:networks()end}}
+    for _,network in ipairs(networks)do
+        if type(network.ssid)=="string"and network.ssid~=""then
+            local entry=network
+            items[#items+1]={text=entry.ssid..(entry.connected and "  ✓"or "")
+                ..(secured(entry)and "  [secured]"or ""),callback=function()self:network(entry)end}
+        end
+    end
+    if #items==1 then items[#items+1]={text=_("No networks found. Try Refresh Networks."),enabled=false}end
+    logger.info("Slate: Wi-Fi picker received",#networks,"network rows")
+    self:list(_("WI-FI NETWORKS"),items,function()self:wifi()end)
+end
 function Session:networks()
+    if self.closed or self.busy then return end
     if not NetworkMgr:isWifiOn()then self:toggleWifi(true);return end
+    if kindle()then
+        self.wifi_adapter=self.wifi_adapter or require("slate_system_wifi_kindle").new(NetworkMgr)
+        self.busy=true
+        local adapter=self.wifi_adapter
+        self:dialog(_("WI-FI NETWORKS"),{
+            {{text=_("Scanning for nearby networks…"),enabled=false}},
+            {{text=_("Cancel Scan"),callback=function()
+                adapter.cancelScan();self.busy=false;self:wifi()
+            end}},
+        })
+        adapter.scan(function(ok,err)
+            self.busy=false
+            if self.closed then return end
+            if not ok then
+                if err~="Cancelled."then self:wifi();self:notice(_("Wi-Fi scan failed: ")..tostring(err))end
+                return
+            end
+            local networks,reason=adapter.getNetworkList()
+            if not networks then self:wifi();self:notice(_("Could not read Wi-Fi scan results: ")..tostring(reason));return end
+            self:networkResults(networks)
+        end)
+        return
+    end
     self:run(_("Scanning for Wi-Fi networks…"),function()
         local networks,err=NetworkMgr:getNetworkList()
         if not networks then return {error=err or _("Wi-Fi network scanning is not supported on this device.")}end
         return {networks=networks}
-    end,function(result)
-        local networks=result.networks or {}
-        table.sort(networks,function(a,b)
-            if (not not a.connected)~=(not not b.connected)then return not not a.connected end
-            return (tonumber(a.signal_quality)or 0)>(tonumber(b.signal_quality)or 0)
-        end)
-        local items={{text=_("Refresh Networks"),callback=function()self:networks()end}}
-        for _,network in ipairs(networks)do
-            if type(network.ssid)=="string"and network.ssid~=""then
-                local entry=network
-                items[#items+1]={text=entry.ssid..(entry.connected and "  ✓"or "")
-                    ..(secured(entry)and "  [secured]"or ""),callback=function()self:network(entry)end}
-            end
-        end
-        if #items==1 then items[#items+1]={text=_("No networks found. Try Refresh Networks."),enabled=false}end
-        self:list(_("WI-FI NETWORKS"),items,function()self:wifi()end)
-    end)
+    end,function(result)self:networkResults(result.networks)end)
 end
 function Session:network(network)
     local rows={}
@@ -339,7 +442,7 @@ function Session:bt()
         {{text=state and _("Turn Bluetooth Off")or _("Turn Bluetooth On"),enabled=state~=nil,
             callback=function()self:toggleBluetooth()end}},
         {{text=_("Select Device"),enabled=state~=nil,callback=function()
-            if state then self:devices(false)else self:toggleBluetooth(true)end
+            if state then self:devices(true)else self:toggleBluetooth(true)end
         end}},
         {{text=_("Close"),callback=function()self:close()end}},
     })
@@ -382,12 +485,12 @@ function Session:devices(scan)
         return a.name:lower()<b.name:lower()
     end)
     local items={{text=_("Scan for Devices"),callback=function()self:devices(true)end}}
-    for _,device in ipairs(devices)do
+    for index,device in ipairs(devices)do
         local entry=device
         local status=entry.connected and _("connected")or entry.paired and _("paired")or _("available")
         items[#items+1]={text=entry.name.."  ["..status.."]",callback=function()self:device(entry)end}
     end
-    if #devices==0 then items[#items+1]={text=_("No devices found. Enable pairing mode and scan."),enabled=false}end
+    if #devices==0 then items[#items+1]={text=_("No discoverable audio devices found."),enabled=false}end
     self:list(_("BLUETOOTH DEVICES"),items,function()self:bt()end)
 end
 function Session:device(device)

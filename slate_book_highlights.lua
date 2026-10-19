@@ -357,7 +357,9 @@ function Popup:init()
         if not self.props.authors then self.props.authors=q.author end
     end
     self.search_header_icons=G_reader_settings:readSetting('slate.popup_header_icons',true)==true
-    self.search_header_size=math.max(16,math.min(200,tonumber(G_reader_settings:readSetting('slate.popup_header_icon_size',72)) or 72))
+    self.search_header_glyph=math.max(16,math.min(200,tonumber(G_reader_settings:readSetting('slate.popup_header_icon_size',72)) or 72))
+    self.search_header_size=G_reader_settings:readSetting('slate.popup_header_outline',false)==true
+        and math.floor(self.search_header_glyph/.58+.5)or self.search_header_glyph
     self.search_header_h=math.max(Screen:scaleBySize(44),self.search_header_icons and self.search_header_size or 0)
     self.search_header_pad=math.max(10,math.min(Screen:scaleBySize(18),math.floor(self.box.w*.05)))
     self.search_title_h=self.search_state and self.search_header_h+self.pad*1.5+self.search_header_pad-self.pad or 0
@@ -594,10 +596,10 @@ function Popup:paintTo(bb)
         if self.search_header_icons then
             local size=self.search_header_size
             local y=header_y+math.floor((self.search_header_h-size)/2)
-            if G_reader_settings:readSetting('slate.popup_header_outline',true)~=false then
+            if G_reader_settings:readSetting('slate.popup_header_outline',false)==true then
                 bb:paintBorder(header_x,y,size,size,math.max(1,math.floor(size/14)),BB.COLOR_BLACK,math.floor(size/2))
             end
-            local glyph=math.max(1,math.floor(size))
+            local glyph=self.search_header_glyph
             local icon
             pcall(function()
                 icon=ImageWidget:new{file=module_dir..'icons/'..(self.search_state.icon or 'search.svg'),width=glyph,height=glyph,

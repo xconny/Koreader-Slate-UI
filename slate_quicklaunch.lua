@@ -59,13 +59,15 @@ local function contains(rect, pos)
         and pos.y >= rect.y and pos.y < rect.y + rect.h
 end
 
-local function drawText(bb, text, rect, size, bold, center, enabled, color)
+local function drawText(bb, text, rect, size, bold, center, enabled, color, fixed)
     local widget
-    for font_size = size, 6, -1 do
+    for font_size = size, fixed and size or 6, -1 do
         widget = TextWidget:new{
             text = tostring(text or ""),
             face = Font:getFace("cfont", font_size),
             bold = bold,
+            max_width = fixed and math.max(1,rect.w) or nil,
+            truncate_with_ellipsis = true,
             fgcolor = color or (enabled == false
                 and Blitbuffer.COLOR_DARK_GRAY or Blitbuffer.COLOR_BLACK),
         }
@@ -472,8 +474,10 @@ function QuickLaunchPopup:init()
         w = math.min(math.floor(w * 0.96), Screen:scaleBySize(900)),
     }
     self.pad = math.max(10, math.floor(self.box.w * 0.045))
-    self.header_icon_size = math.max(16,math.min(200,
+    self.header_glyph_size = math.max(16,math.min(200,
         tonumber(G_reader_settings:readSetting("slate.popup_header_icon_size",72)) or 72))
+    self.header_icon_size = G_reader_settings:readSetting("slate.popup_header_outline",false)==true
+        and math.floor(self.header_glyph_size/.58+.5) or self.header_glyph_size
     self.title_h = math.floor(self.row_h * 1.5)
     if not self.selection_mode and G_reader_settings:readSetting("slate.popup_header_icons",true)==true then
         self.title_h=math.max(self.title_h,self.header_icon_size)
@@ -631,16 +635,14 @@ function QuickLaunchPopup:paintTo(bb)
     end
 
     -- Use a shared font across both tabs and all pages.
+    -- Font:getFace scales for device DPI. Long labels truncate individually;
+    -- a changing server address must not shrink every launcher item.
     local shared_font=self.font_size
-    for _,list in ipairs(self.layout_lists)do
-        for _,entry in ipairs(list)do
-            local label=(self.selection_mode and "[✓] " or "[ ")..tostring(entry.text):upper()..(self.selection_mode and "" or " ]")
-            for candidate=shared_font,6,-1 do
-                local widget=TextWidget:new{text=label,face=Font:getFace("cfont",candidate)}
-                local dim=widget:getSize();widget:free()
-                if (dim.w<=column_w and dim.h<=row-8) or candidate==6 then shared_font=candidate;break end
-            end
-        end
+    local reference_width=math.max(1,math.floor((width-column_gap*2)/3))
+    for candidate=self.font_size,12,-1 do
+        local sample=TextWidget:new{text="[ MAHJONG SOLITAIRE ]",face=Font:getFace("cfont",candidate)}
+        local dim=sample:getSize();sample:free()
+        if(dim.w<=reference_width and dim.h<=row-8)or candidate==12 then shared_font=candidate;break end
     end
     for i=1,count do entry_font_sizes[i]=shared_font end
     -- Use the same column anchors on both tabs and every page.
@@ -650,20 +652,34 @@ function QuickLaunchPopup:paintTo(bb)
     -- columns using that frame's capacity, as Apps does, rather than System's
     -- four-item page size; otherwise their text anchors shift between tabs.
     local anchor_page_size = self.frame_rows and self.frame_rows * columns or self.page_size
-    for _, list in ipairs(self.layout_lists) do
+    -- Three-column tabs measure their own labels. A long name in Apps must
+    -- not move the Games columns toward the left edge.
+    local anchor_lists = columns == 3 and {self.entries} or self.layout_lists
+    for _, list in ipairs(anchor_lists) do
         for index, entry in ipairs(list) do
             local first_index = math.floor((index-1)/anchor_page_size)*anchor_page_size+1
             local page_count = math.min(anchor_page_size,#list-first_index+1)
             local column = math.floor((index-first_index) / math.max(1, math.ceil(page_count/columns))) + 1
             local label = self.selection_mode and "[✓] "..tostring(entry.text):upper()
                 or "[ "..tostring(entry.text):upper().." ]"
-            local widget=TextWidget:new{text=label,face=Font:getFace("cfont",shared_font)}
+            local widget=TextWidget:new{text=label,face=Font:getFace("cfont",shared_font),max_width=column_w,truncate_with_ellipsis=true}
             local dim=widget:getSize();widget:free()
             column_widths[column]=math.max(column_widths[column],math.min(dim.w,column_w))
         end
     end
 
     local grid_width=columns*column_w+(columns-1)*column_gap
+    local column_offsets = {}
+    if columns == 3 then
+        -- Center the visible columns together, rather than centering empty
+        -- full-width cells whose left-aligned text can look off-center.
+        grid_width = 0
+        for column = 1, columns do
+            column_offsets[column] = grid_width
+            grid_width = grid_width + column_widths[column]
+            if column < columns then grid_width = grid_width + column_gap end
+        end
+    end
     local grid_x=x+math.floor((width-grid_width)/2)
 
     if self.selection_mode then
@@ -678,10 +694,10 @@ function QuickLaunchPopup:paintTo(bb)
             local rect={x=header_x,y=title.y+math.floor((self.title_h-size)/2),w=size,h=size}
             local path=QuickLaunch:getIconPath(self.section)
             local image
-            local outline=G_reader_settings:readSetting("slate.popup_header_outline",true)~=false
+            local outline=G_reader_settings:readSetting("slate.popup_header_outline",false)==true
             if type(path)=="string" and path~="" then
                 local ok = pcall(function()
-                    local icon_size=math.floor(size)
+                    local icon_size=self.header_glyph_size
                     self:paintHeaderCircle(bb,rect)
                     if self.section=="system"then
                         image=IconWidget:new{icon="appbar.settings",width=icon_size,height=icon_size,
@@ -693,9 +709,9 @@ function QuickLaunchPopup:paintTo(bb)
                     image:paintTo(bb,rect.x+math.floor((size-icon_size)/2),rect.y+math.floor((size-icon_size)/2))
                 end)
                 if image then image:free() end
-                if not ok then QuickLaunch:paintButton(bb,rect,math.max(1,math.floor(size/14)),nil,nil,false,nil,outline,self.section,1) end
+                if not ok then QuickLaunch:paintButton(bb,rect,math.max(1,math.floor(size/14)),nil,nil,false,nil,outline,self.section,self.header_glyph_size/size) end
             else
-                QuickLaunch:paintButton(bb,rect,math.max(1,math.floor(size/14)),nil,nil,false,nil,outline,self.section,1)
+                QuickLaunch:paintButton(bb,rect,math.max(1,math.floor(size/14)),nil,nil,false,nil,outline,self.section,self.header_glyph_size/size)
             end
             header_x=header_x+size+Screen:scaleBySize(16)
         end
@@ -713,9 +729,9 @@ function QuickLaunchPopup:paintTo(bb)
         local index = (i - 1) % rows_per_column
 
         local rect = {
-            x = grid_x + column * (column_w + column_gap),
+            x = grid_x + (column_offsets[column + 1] or column * (column_w + column_gap)),
             y = list_y + index * row,
-            w = column_w,
+            w = columns == 3 and column_widths[column + 1] or column_w,
             h = row,
         }
         self.rows[#self.rows + 1] = {
@@ -730,17 +746,17 @@ function QuickLaunchPopup:paintTo(bb)
         ) .. tostring(entry.text):upper()
             .. (self.selection_mode and "" or " ]")
 
-        local inset = math.max(0,
+        local inset = columns == 3 and 0 or math.max(0,
             math.floor((column_w - column_widths[column + 1]) / 2))
         local text_rect = {
             x = rect.x + inset,
             y = rect.y,
-            w = column_w - inset,
+            w = rect.w - inset,
             h = rect.h,
         }
 
         drawText(bb, label, text_rect, entry_font_sizes[i] or self.font_size,
-            false, false, self.selection_mode or entry.enabled)
+            false, false, self.selection_mode or entry.enabled,nil,true)
     end
 
     if count == 0 then
@@ -871,7 +887,7 @@ end
 function QuickLaunchPopup:paintHeaderCircle(bb,rect)
     local radius=math.floor(rect.w/2)
     bb:paintRoundedRect(rect.x,rect.y,rect.w,rect.h,Blitbuffer.COLOR_WHITE,radius)
-    if G_reader_settings:readSetting("slate.popup_header_outline",true)~=false then
+    if G_reader_settings:readSetting("slate.popup_header_outline",false)==true then
         bb:paintBorder(rect.x,rect.y,rect.w,rect.h,math.max(1,math.floor(rect.w/14)),Blitbuffer.COLOR_BLACK,radius)
     end
 end

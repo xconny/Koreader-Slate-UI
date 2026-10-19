@@ -573,8 +573,10 @@ function QuoteWidget:init()
     }
     self.header_icons = G_reader_settings:readSetting("slate.popup_header_icons", true) == true
     self.header_text = G_reader_settings:readSetting("slate.popup_header_text", true) == true
-    self.header_icon_size = math.max(16, math.min(200,
+    self.header_glyph_size = math.max(16, math.min(200,
         tonumber(G_reader_settings:readSetting("slate.popup_header_icon_size", 72)) or 72))
+    self.header_icon_size = G_reader_settings:readSetting("slate.popup_header_outline",false)==true
+        and math.floor(self.header_glyph_size/.58+.5) or self.header_glyph_size
     self.header_rect = nil
     self.change_selection_button = nil
     do
@@ -705,10 +707,10 @@ function QuoteWidget:paintTo(bb)
         if self.header_icons then
             local size = self.header_icon_size
             local y = header.y + math.floor((header.h - size) / 2)
-            local glyph_size = math.max(1, math.floor(size))
+            local glyph_size = self.header_glyph_size
             bb:paintRoundedRect(header.x, y, size, size,
                 Blitbuffer.COLOR_WHITE, math.floor(size / 2))
-            if G_reader_settings:readSetting("slate.popup_header_outline", true) ~= false then
+            if G_reader_settings:readSetting("slate.popup_header_outline", false) == true then
                 bb:paintBorder(header.x, y, size, size,
                     math.max(1, math.floor(size / 14)),
                     Blitbuffer.COLOR_BLACK, math.floor(size / 2))
