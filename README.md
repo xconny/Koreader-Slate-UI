@@ -8,55 +8,71 @@ Click a thumbnail or its title to open the full-size image.
 
 <table>
   <tr>
-    <td align="center" width="25%">
-      <a href="screenshots/main%20ui%20custom%20background.png?raw=true"><img src="screenshots/main%20ui%20custom%20background.png" width="150" alt="Slate UI — Main UI — Custom Background"></a>
+    <td align="center" width="33%">
+      <a href="screenshots/main%20ui%20custom%20background.png?raw=true"><img src="screenshots/main%20ui%20custom%20background.png" width="150" alt="Slate UI — Custom Background"></a>
       <br><a href="screenshots/main%20ui%20custom%20background.png?raw=true">[main ui — custom background]</a>
     </td>
-    <td align="center" width="25%">
-      <a href="screenshots/main%20ui%20cover%20background.png?raw=true"><img src="screenshots/main%20ui%20cover%20background.png" width="150" alt="Slate UI — Main UI — Cover Background"></a>
+    <td align="center" width="33%">
+      <a href="screenshots/main%20ui%20cover%20background.png?raw=true"><img src="screenshots/main%20ui%20cover%20background.png" width="150" alt="Slate UI — Cover Background"></a>
       <br><a href="screenshots/main%20ui%20cover%20background.png?raw=true">[main ui — cover background]</a>
     </td>
-    <td align="center" width="25%">
-      <a href="screenshots/entire%20library.png?raw=true"><img src="screenshots/entire%20library.png" width="150" alt="Slate UI — Entire Library"></a>
-      <br><a href="screenshots/entire%20library.png?raw=true">[entire library]</a>
+    <td align="center" width="33%">
+      <a href="screenshots/pin%20pad%20lock.png?raw=true"><img src="screenshots/pin%20pad%20lock.png" width="150" alt="Slate UI — PIN-Pad Lock"></a>
+      <br><a href="screenshots/pin%20pad%20lock.png?raw=true">[pin-pad lock]</a>
     </td>
-    <td align="center" width="25%">
+  </tr>
+  <tr>
+    <td align="center" width="33%">
+      <a href="screenshots/entire%20library%20.png?raw=true"><img src="screenshots/entire%20library%20.png" width="150" alt="Slate UI — Entire Library"></a>
+      <br><a href="screenshots/entire%20library%20.png?raw=true">[entire library]</a>
+    </td>
+    <td align="center" width="33%">
       <a href="screenshots/library%20folders.png?raw=true"><img src="screenshots/library%20folders.png" width="150" alt="Slate UI — Library Categories"></a>
       <br><a href="screenshots/library%20folders.png?raw=true">[library categories]</a>
     </td>
+    <td align="center" width="33%">
+      <a href="screenshots/reading%20progress.png?raw=true"><img src="screenshots/reading%20progress.png" width="150" alt="Slate UI — Reading Progress and Goals"></a>
+      <br><a href="screenshots/reading%20progress.png?raw=true">[reading progress &amp; goals]</a>
+    </td>
   </tr>
   <tr>
-    <td align="center" width="25%">
+    <td align="center" width="33%">
       <a href="screenshots/recent%20books.png?raw=true"><img src="screenshots/recent%20books.png" width="150" alt="Slate UI — Recent Books"></a>
       <br><a href="screenshots/recent%20books.png?raw=true">[recent books]</a>
     </td>
-    <td align="center" width="25%">
-      <a href="screenshots/current%20book%20description.png?raw=true"><img src="screenshots/current%20book%20description.png" width="150" alt="Slate UI — Book Description"></a>
-      <br><a href="screenshots/current%20book%20description.png?raw=true">[book description]</a>
+    <td align="center" width="33%">
+      <a href="screenshots/quick%20launch%20menu%20games.png?raw=true"><img src="screenshots/quick%20launch%20menu%20games.png" width="150" alt="Slate UI — Games Quick Launch"></a>
+      <br><a href="screenshots/quick%20launch%20menu%20games.png?raw=true">[quick launch — games]</a>
     </td>
-    <td align="center" width="25%">
-      <a href="screenshots/current%20book%20highlights.png?raw=true"><img src="screenshots/current%20book%20highlights.png" width="150" alt="Slate UI — Book Highlights"></a>
-      <br><a href="screenshots/current%20book%20highlights.png?raw=true">[book highlights]</a>
-    </td>
-    <td align="center" width="25%">
-      <a href="screenshots/quotes%20viewer.png?raw=true"><img src="screenshots/quotes%20viewer.png" width="150" alt="Slate UI — Quotes Viewer"></a>
-      <br><a href="screenshots/quotes%20viewer.png?raw=true">[quotes viewer]</a>
+    <td align="center" width="33%">
+      <a href="screenshots/quick%20launch%20menu%20apps.png?raw=true"><img src="screenshots/quick%20launch%20menu%20apps.png" width="150" alt="Slate UI — Apps Quick Launch"></a>
+      <br><a href="screenshots/quick%20launch%20menu%20apps.png?raw=true">[quick launch — apps]</a>
     </td>
   </tr>
   <tr>
-    <td align="center" width="25%">
-      <a href="screenshots/quick%20launch%20menu.png?raw=true"><img src="screenshots/quick%20launch%20menu.png" width="150" alt="Slate UI — Quick Launch"></a>
-      <br><a href="screenshots/quick%20launch%20menu.png?raw=true">[quick launch]</a>
+    <td align="center" width="33%">
+      <a href="screenshots/quick%20launch%20menu%20system.png?raw=true"><img src="screenshots/quick%20launch%20menu%20system.png" width="150" alt="Slate UI — System Controls"></a>
+      <br><a href="screenshots/quick%20launch%20menu%20system.png?raw=true">[quick launch — system]</a>
     </td>
-    <td align="center" width="25%">
-      <a href="screenshots/reading%20progress.png?raw=true"><img src="screenshots/reading%20progress.png" width="150" alt="Slate UI — Reading Statistics"></a>
-      <br><a href="screenshots/reading%20progress.png?raw=true">[reading statistics]</a>
+    <td align="center" width="33%">
+      <a href="screenshots/current%20book%20description.png?raw=true"><img src="screenshots/current%20book%20description.png" width="150" alt="Slate UI — Book Description"></a>
+      <br><a href="screenshots/current%20book%20description.png?raw=true">[book description]</a>
     </td>
-    <td align="center" width="25%">
+    <td align="center" width="33%">
+      <a href="screenshots/current%20book%20highlights.png?raw=true"><img src="screenshots/current%20book%20highlights.png" width="150" alt="Slate UI — Book Highlights"></a>
+      <br><a href="screenshots/current%20book%20highlights.png?raw=true">[book highlights]</a>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="33%">
+      <a href="screenshots/quotes%20viewer.png?raw=true"><img src="screenshots/quotes%20viewer.png" width="150" alt="Slate UI — Quotes Viewer"></a>
+      <br><a href="screenshots/quotes%20viewer.png?raw=true">[quotes viewer]</a>
+    </td>
+    <td align="center" width="33%">
       <a href="screenshots/week%20weather.png?raw=true"><img src="screenshots/week%20weather.png" width="150" alt="Slate UI — Seven-Day Weather"></a>
       <br><a href="screenshots/week%20weather.png?raw=true">[seven-day weather]</a>
     </td>
-    <td></td>
+    <td width="33%"></td>
   </tr>
 </table>
 
