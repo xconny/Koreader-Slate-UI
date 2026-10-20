@@ -21,6 +21,7 @@ local logger = require("logger")
 local _ = require("gettext")
 
 local QuickLaunch = {}
+local EntryIcons = require("slate_quicklaunch_icons")
 local SECTIONS = {"games", "apps", "system"}
 local SELECTION_KEY = "slate.quicklaunch_plugins"
 local module_source = debug.getinfo(1, "S").source
@@ -72,7 +73,7 @@ local function drawText(bb, text, rect, size, bold, center, enabled, color, fixe
                 and Blitbuffer.COLOR_DARK_GRAY or Blitbuffer.COLOR_BLACK),
         }
         local dim = widget:getSize()
-        if (dim.h <= rect.h - 8 and dim.w <= rect.w) or font_size == 6 then
+        if fixed or (dim.h <= rect.h - 8 and dim.w <= rect.w) or font_size == 6 then
             break
         end
         widget:free()
@@ -316,6 +317,12 @@ function QuickLaunch:getAvailableEntries(owner)
 end
 
 function QuickLaunch:getEntries(owner, section)
+    if section=="system"then return {
+        {id="slate.system.wifi",text=_("Wi-Fi"),enabled=true,system_action="wifi"},
+        {id="slate.system.bluetooth",text=_("Bluetooth"),enabled=true,system_action="bluetooth"},
+        {id="slate.system.restart",text=_("Restart KOReader"),enabled=not Device.canRestart or Device:canRestart(),system_action="restart"},
+        {id="slate.system.exit",text=_("Exit KOReader"),enabled=true,system_action="exit"},
+    }end
     local selected, entries = {}, {}
     for _, id in ipairs(selectedIds(section)) do
         if type(id) == "string" then selected[id] = true end
@@ -388,6 +395,48 @@ function QuickLaunch:launch(owner, entry)
     end)
 end
 
+function QuickLaunch:choosePlaceholder(owner,entry)
+    if not EntryIcons:needsChoice(entry)then return self:launch(owner,entry)end
+    if owner._slate_quicklaunch_icon_prompt then return end
+    local dialog
+    local function note()
+        UIManager:nextTick(function()
+            local popup=owner._slate_quicklaunch_popup
+            if popup then popup:init();UIManager:setDirty(popup,"ui")end
+            UIManager:show(SlateUtils:themePopup(InfoMessage:new{modal=true,
+                text=_("You can change this icon later under Change Widget Icons → Edit Quick Launch Plugin Icons, or turn off Quick Launch icons there.")}),"ui")
+        end)
+    end
+    local function action(callback)
+        return function()
+            UIManager:nextTick(function()
+                UIManager:close(dialog)
+                owner._slate_quicklaunch_icon_prompt=nil
+                callback()
+            end)
+        end
+    end
+    dialog=require("ui/widget/buttondialog"):new{modal=true,
+        title=tostring(entry.text),title_align="center",
+        width=math.min(math.floor(Screen:getWidth()*.86),Screen:scaleBySize(760)),
+        buttons={
+            {{text=_("Add Icon"),callback=action(function()
+                require("slate_settings"):chooseQuickLaunchIcon(owner,entry,note)
+            end)}},
+            {{text=_("Continue Using Placeholder"),callback=action(function()
+                EntryIcons:keepPlaceholder(entry);note()
+            end)}},
+        },
+    }
+    local on_close=dialog.onCloseWidget
+    dialog.onCloseWidget=function(instance,...)
+        if owner._slate_quicklaunch_icon_prompt==instance then owner._slate_quicklaunch_icon_prompt=nil end
+        if on_close then on_close(instance,...)end
+    end
+    owner._slate_quicklaunch_icon_prompt=dialog
+    UIManager:show(SlateUtils:themePopup(dialog),"ui")
+end
+
 function QuickLaunch:launchInFileManager(owner,entry)
     self:close(owner)
     if owner._slate_screen then ScreenSaverWidget.onClose(owner._slate_screen)end
@@ -428,12 +477,7 @@ function QuickLaunchPopup:init()
     if self.section ~= "apps" and self.section ~= "system" then self.section = "games" end
     if self.selection_mode and self.section=="system" then self.section="apps"end
     local available = QuickLaunch:getAvailableEntries(self.owner)
-    local lists = {games={},apps={},system={
-        {id="slate.system.wifi",text=_("Wi-Fi"),enabled=true,system_action="wifi"},
-        {id="slate.system.bluetooth",text=_("Bluetooth"),enabled=true,system_action="bluetooth"},
-        {id="slate.system.restart",text=_("Restart KOReader"),enabled=not Device.canRestart or Device:canRestart(),system_action="restart"},
-        {id="slate.system.exit",text=_("Exit KOReader"),enabled=true,system_action="exit"},
-    }}
+    local lists = {games={},apps={},system=QuickLaunch:getEntries(self.owner,"system")}
     for _, section in ipairs({"games","apps"}) do
         local selected = {}
         for _,id in ipairs(selectedIds(section)) do selected[id]=true end
@@ -645,16 +689,24 @@ function QuickLaunchPopup:paintTo(bb)
         if(dim.w<=reference_width and dim.h<=row-8)or candidate==12 then shared_font=candidate;break end
     end
     for i=1,count do entry_font_sizes[i]=shared_font end
+    local font_probe=TextWidget:new{text="Ag",face=Font:getFace("cfont",shared_font)}
+    local icon_size=math.max(1,math.min(row-10,font_probe:getSize().h))
+    font_probe:free()
+    local icon_gap=math.max(4,math.floor(icon_size*.4))
+    local function entryIcon(entry)
+        if self.selection_mode then return nil,0 end
+        local path,placeholder=EntryIcons:getPath(entry)
+        return path,path and icon_size+icon_gap or 0,placeholder
+    end
     -- Use the same column anchors on both tabs and every page.
     column_widths = {}
     for column = 1, columns do column_widths[column] = 0 end
-    -- System displays two rows inside the shared taller frame. Measure plugin
-    -- columns using that frame's capacity, as Apps does, rather than System's
-    -- four-item page size; otherwise their text anchors shift between tabs.
+    -- System uses the same two-column anchors as Apps, measured using the
+    -- shared frame capacity rather than System's shorter four-item page.
     local anchor_page_size = self.frame_rows and self.frame_rows * columns or self.page_size
-    -- Three-column tabs measure their own labels. A long name in Apps must
-    -- not move the Games columns toward the left edge.
-    local anchor_lists = columns == 3 and {self.entries} or self.layout_lists
+    -- Only three-column tabs use a compact group measured from their own list.
+    local compact_columns = columns == 3
+    local anchor_lists = compact_columns and {self.entries} or self.layout_lists
     for _, list in ipairs(anchor_lists) do
         for index, entry in ipairs(list) do
             local first_index = math.floor((index-1)/anchor_page_size)*anchor_page_size+1
@@ -662,15 +714,16 @@ function QuickLaunchPopup:paintTo(bb)
             local column = math.floor((index-first_index) / math.max(1, math.ceil(page_count/columns))) + 1
             local label = self.selection_mode and "[✓] "..tostring(entry.text):upper()
                 or "[ "..tostring(entry.text):upper().." ]"
-            local widget=TextWidget:new{text=label,face=Font:getFace("cfont",shared_font),max_width=column_w,truncate_with_ellipsis=true}
+            local _,lead=entryIcon(entry)
+            local widget=TextWidget:new{text=label,face=Font:getFace("cfont",shared_font),max_width=math.max(1,column_w-lead),truncate_with_ellipsis=true}
             local dim=widget:getSize();widget:free()
-            column_widths[column]=math.max(column_widths[column],math.min(dim.w,column_w))
+            column_widths[column]=math.max(column_widths[column],math.min(dim.w+lead,column_w))
         end
     end
 
     local grid_width=columns*column_w+(columns-1)*column_gap
     local column_offsets = {}
-    if columns == 3 then
+    if compact_columns then
         -- Center the visible columns together, rather than centering empty
         -- full-width cells whose left-aligned text can look off-center.
         grid_width = 0
@@ -731,7 +784,7 @@ function QuickLaunchPopup:paintTo(bb)
         local rect = {
             x = grid_x + (column_offsets[column + 1] or column * (column_w + column_gap)),
             y = list_y + index * row,
-            w = columns == 3 and column_widths[column + 1] or column_w,
+            w = compact_columns and column_widths[column + 1] or column_w,
             h = row,
         }
         self.rows[#self.rows + 1] = {
@@ -746,7 +799,7 @@ function QuickLaunchPopup:paintTo(bb)
         ) .. tostring(entry.text):upper()
             .. (self.selection_mode and "" or " ]")
 
-        local inset = columns == 3 and 0 or math.max(0,
+        local inset = compact_columns and 0 or math.max(0,
             math.floor((column_w - column_widths[column + 1]) / 2))
         local text_rect = {
             x = rect.x + inset,
@@ -754,6 +807,21 @@ function QuickLaunchPopup:paintTo(bb)
             w = rect.w - inset,
             h = rect.h,
         }
+        local icon_path,lead,placeholder=entryIcon(entry)
+        if icon_path then
+            self.rows[#self.rows].icon_rect={x=text_rect.x,y=rect.y+math.floor((rect.h-icon_size)/2),w=icon_size,h=icon_size}
+            self.rows[#self.rows].placeholder=placeholder
+            local icon
+            local ok,err=pcall(function()
+                icon=ImageWidget:new{file=icon_path,width=icon_size,height=icon_size,
+                    alpha=true,original_in_nightmode=false,invert=false}
+                icon:paintTo(bb,text_rect.x,rect.y+math.floor((rect.h-icon_size)/2))
+            end)
+            if icon then icon:free()end
+            if not ok then logger.warn("Slate: quick launch icon failed:",icon_path,err)end
+            text_rect.x=text_rect.x+lead
+            text_rect.w=math.max(1,text_rect.w-lead)
+        end
 
         drawText(bb, label, text_rect, entry_font_sizes[i] or self.font_size,
             false, false, self.selection_mode or entry.enabled,nil,true)
@@ -932,7 +1000,11 @@ function QuickLaunchPopup:onTap(_, ges)
                 self.pending[row.entry.id] = not self.pending[row.entry.id]
                 UIManager:setDirty(self, "ui")
             else
-                QuickLaunch:launch(self.owner, row.entry)
+                if row.placeholder and contains(row.icon_rect,pos)then
+                    QuickLaunch:choosePlaceholder(self.owner,row.entry)
+                else
+                    QuickLaunch:launch(self.owner, row.entry)
+                end
             end
             return true
         end
@@ -1005,6 +1077,10 @@ end
 function QuickLaunchPopup:onCloseWidget()
     if self.owner._slate_quicklaunch_popup == self then
         self.owner._slate_quicklaunch_popup = nil
+        if self.owner._slate_quicklaunch_icon_prompt then
+            UIManager:close(self.owner._slate_quicklaunch_icon_prompt)
+            self.owner._slate_quicklaunch_icon_prompt=nil
+        end
         local system=package.loaded.slate_system
         if system then system:close(self.owner)end
     end

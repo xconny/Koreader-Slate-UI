@@ -1676,6 +1676,10 @@ end
 function Slate:cancelWakeRepaint()
     if self._slate_wake_repaint then UIManager:unschedule(self._slate_wake_repaint);self._slate_wake_repaint=nil end
     if self._slate_wake_banner then UIManager:unschedule(self._slate_wake_banner);self._slate_wake_banner=nil end
+    if self._slate_wake_followups then
+        for callback in pairs(self._slate_wake_followups)do UIManager:unschedule(callback)end
+        self._slate_wake_followups=nil
+    end
 end
 
 function Slate:scheduleWakeRepaint()
@@ -1701,12 +1705,32 @@ function Slate:scheduleWakeRepaint()
         self._slate_wake_banner=nil
         if not active()then return end
         local height=Screen:getHeight()
-        local strip=math.ceil(height*.12)
+        local strip=math.ceil(height*.20)
         local region=require("ui/geometry"):new{x=0,y=height-strip,w=Screen:getWidth(),h=strip}
         UIManager:setDirty("all","ui",region)
     end
     self._slate_wake_banner=banner
     UIManager:scheduleIn(1.6,banner)
+    -- Recent Kindle firmware can draw the banner later than 1.6 seconds.
+    -- Redraw through the complete UI stack, retaining PIN and child dialogs.
+    -- These are finite UI refreshes, not repeated full-screen flashes.
+    local followups={}
+    self._slate_wake_followups=followups
+    for _,delay in ipairs({3.5,7})do
+        local callback
+        callback=function()
+            if self._slate_wake_followups~=followups then return end
+            followups[callback]=nil
+            if not next(followups)then self._slate_wake_followups=nil end
+            if not active()then return end
+            local height=Screen:getHeight()
+            local strip=delay==3.5 and height or math.ceil(height*.20)
+            local region=require("ui/geometry"):new{x=0,y=height-strip,w=Screen:getWidth(),h=strip}
+            UIManager:setDirty("all","ui",region)
+        end
+        followups[callback]=true
+        UIManager:scheduleIn(delay,callback)
+    end
 end
 
 function Slate:onResume()

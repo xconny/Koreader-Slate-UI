@@ -208,8 +208,8 @@ local function backgroundPicker()
     }
 end
 
-local function iconPicker(owner, name, label)
-    local key = "slate.widget_icons." .. name
+local function iconPicker(owner, name, label, setting_key, default_folder, on_selected)
+    local key = setting_key or "slate.widget_icons." .. name
     return {
         text = label,
         keep_menu_open = true,
@@ -217,7 +217,7 @@ local function iconPicker(owner, name, label)
             local selected = G_reader_settings:readSetting(key)
             local folder = G_reader_settings:readSetting("slate.widget_icons.folder")
                 or (type(selected) == "string" and selected:match("^(.*)/[^/]+$"))
-                or (owner:getPluginDir() .. "/icons")
+                or default_folder or (owner:getPluginDir() .. "/icons")
             showDialog(PathChooser:new{
                 title = label,
                 path = folder,
@@ -242,10 +242,49 @@ local function iconPicker(owner, name, label)
                     if owner._slate_screen then
                         UIManager:setDirty(owner._slate_screen, "full")
                     end
+                    if on_selected then on_selected(path)end
                 end,
             })
         end,
     }
+end
+
+function Settings:chooseQuickLaunchIcon(owner,entry,on_selected)
+    local Icons=require("slate_quicklaunch_icons")
+    iconPicker(owner,entry.id,_("Choose Icon"),Icons:key(entry),
+        owner:getPluginDir().."/icons/quicklaunch",on_selected).callback()
+end
+
+function Settings:buildQuickLaunchIcons(owner)
+    local Icons=require("slate_quicklaunch_icons")
+    local function refresh(menu)
+        G_reader_settings:flush()
+        if menu and menu.updateItems then menu:updateItems()end
+        QuickLaunch:close(owner)
+        if owner._slate_screen then UIManager:setDirty(owner._slate_screen,"full")end
+    end
+    local items={{text=_("Enable Quick Launch Icons"),keep_menu_open=true,
+        checked_func=function()return Icons:enabled()end,
+        callback=function(menu)
+            G_reader_settings:saveSetting("slate.quicklaunch_icons.enabled",not Icons:enabled())
+            refresh(menu)
+        end}}
+    for section_index,section in ipairs({"games","apps","system"})do
+        local entries=QuickLaunch:getEntries(owner,section)
+        if #entries>0 then
+            items[#items+1]={text=section=="games"and _("Games")or section=="apps"and _("Apps")or _("System"),enabled=false,separator=true}
+            for entry_index,entry in ipairs(entries)do
+                local key=Icons:key(entry)
+                local picker=iconPicker(owner,entry.id,_("Choose Icon"),key,owner:getPluginDir().."/icons/quicklaunch")
+                local choose=picker.callback
+                picker.callback=function(menu)QuickLaunch:close(owner);choose(menu)end
+                items[#items+1]={text=entry.text,sub_item_table={picker,
+                    {text=_("Use Default Icon"),keep_menu_open=true,
+                        callback=function(menu)G_reader_settings:delSetting(key);refresh(menu)end}}}
+            end
+        end
+    end
+    return items
 end
 
 local function saveBookOption(owner, key, value, menu)
@@ -481,6 +520,8 @@ function Settings:buildWidget(owner)
                 iconPicker(owner, "quote", _("Edit Random Quote Icon")),
                 iconPicker(owner, "library", _("Edit Library Icon")),
                 iconPicker(owner, "recents", _("Edit Recents Icon")),
+                {text=_("Edit Quick Launch Plugin Icons"),
+                    sub_item_table_func=function()return self:buildQuickLaunchIcons(owner)end},
             },
         },
         { text = _("Widget position & size"), sub_item_table = position_items },

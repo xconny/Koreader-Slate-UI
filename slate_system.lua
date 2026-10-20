@@ -74,7 +74,22 @@ function Session:dialog(title, rows)
         tap_close_callback=self:defer(function()self:close()end),
     }
     if widget.movable and widget.movable[1] then
-        widget.movable[1].radius=G_reader_settings:readSetting("slate.popup_corner_radius",40)
+        local frame=widget.movable[1]
+        frame.radius=tonumber(G_reader_settings:readSetting("slate.popup_corner_radius",40))or 40
+        -- ButtonDialog has zero bottom padding. Its final button paints over
+        -- the enlarged corner arcs, so protect the arcs and draw the outline
+        -- after all child backgrounds (also on button-feedback repaints).
+        frame.padding_bottom=math.max(frame.padding_bottom or 0,math.ceil(frame.radius*.4))
+        local paint=frame.paintTo
+        frame.paintTo=function(instance,bb,x,y)
+            paint(instance,bb,x,y)
+            local size=instance:getSize()
+            local margin=instance.margin or 0
+            bb:paintBorder(x+margin,y+margin,
+                (instance.width or size.w)-2*margin,(instance.height or size.h)-2*margin,
+                instance.bordersize or 2,instance.color or require("ffi/blitbuffer").COLOR_BLACK,
+                instance.radius,true)
+        end
     end
     self.view=widget
     self:show(widget)
